@@ -1,0 +1,20 @@
+#!/bin/bash
+set -e
+
+# This script should be run from the bin directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Install Drupal Coder via Composer (PHP 8.3 compatible)
+if [ ! -d vendor/drupal/coder ]; then
+  # Initialize composer.json if not exists
+  if [ ! -f composer.json ]; then
+    echo '{}' > composer.json
+  fi
+  composer config --no-plugins allow-plugins.dealerdirect/phpcodesniffer-composer-installer true
+  COMPOSER_ALLOW_SUPERUSER=1 composer require --no-interaction drupal/coder:^8.3
+fi
+
+# The dealerdirect/phpcodesniffer-composer-installer plugin automatically
+# registers the coding standards with PHPCS
+# Use vendor/bin/phpcs to run the linter
