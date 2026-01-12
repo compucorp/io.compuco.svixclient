@@ -17,8 +17,10 @@ class CRM_Svixclient_Client {
 
   /**
    * Base URL for Svix Ingest API.
+   *
+   * Protected to allow test classes to override for mock servers.
    */
-  private string $baseUrl = 'https://api.svix.com';
+  protected string $baseUrl = 'https://api.svix.com';
 
   /**
    * Svix API key.
@@ -149,18 +151,31 @@ class CRM_Svixclient_Client {
    *
    * @return array|null
    *   The destination data, or NULL if not found.
+   *
+   * @throws CRM_Core_Exception
+   *   If the API call fails with a non-404 error.
    */
   public function getDestination(string $sourceId, string $destinationId): ?array {
     try {
       return $this->request('GET', "/ingest/api/v1/source/{$sourceId}/endpoint/{$destinationId}");
     }
     catch (\Exception $e) {
-      \Civi::log()->warning('Failed to get Svix destination', [
+      // Only return NULL for 404 (not found) errors.
+      // Re-throw all other errors (network issues, 500s, etc.).
+      if (strpos($e->getMessage(), '(404)') !== FALSE) {
+        \Civi::log()->info('Svix destination not found', [
+          'source_id' => $sourceId,
+          'destination_id' => $destinationId,
+        ]);
+        return NULL;
+      }
+
+      \Civi::log()->error('Failed to get Svix destination', [
         'source_id' => $sourceId,
         'destination_id' => $destinationId,
         'error' => $e->getMessage(),
       ]);
-      return NULL;
+      throw $e;
     }
   }
 
@@ -204,6 +219,9 @@ class CRM_Svixclient_Client {
    */
   private function request(string $method, string $path, ?array $data = NULL): array {
     $ch = curl_init();
+    if ($ch === FALSE) {
+      throw new CRM_Core_Exception('Failed to initialize cURL session for Svix API request.');
+    }
 
     $options = [
       CURLOPT_URL => $this->baseUrl . $path,
@@ -256,8 +274,8 @@ class CRM_Svixclient_Client {
       $errorMessage = "Svix API error ({$httpCode})";
       if ($response) {
         $decoded = json_decode($response, TRUE);
-        if (isset($decoded['message'])) {
-          $errorMessage .= ": {$decoded['message']}";
+        if (isset($decoded['detail'])) {
+          $errorMessage .= ": {$decoded['detail']}";
         }
         else {
           $errorMessage .= ": {$response}";

@@ -77,7 +77,7 @@ phpunit9 --filter testMethodName tests/phpunit/Path/To/Test.php
 
 ## Code Style
 
-- PHP 8.3 required (`declare(strict_types=1)`)
+- PHP 8.1+ required (`declare(strict_types=1)`)
 - Drupal coding standard with CiviCRM exceptions (see `phpcs-ruleset.xml`)
 - Excluded from linting: `*.civix.php`, `CRM/Svixclient/DAO/*`, `vendor/`, `mixin/`
 

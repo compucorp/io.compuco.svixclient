@@ -25,8 +25,8 @@
     <ver>6.4</ver>
   </compatibility>
   <php_compatibility mode="list">
-    <comments>Requires PHP 8.3</comments>
-    <ver>8.3</ver>
+    <comments>Requires PHP 8.1</comments>
+    <ver>8.1</ver>
   </php_compatibility>
   <smarty_compatibility mode="list">
     <comments>Listed versions. For example, specify both "4" and "5".</comments>

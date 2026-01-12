@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Civi\Api4;
 
-use Generic\DAOEntity;
+use Civi\Api4\Generic\DAOEntity;
 
 /**
  * SvixDestination entity.

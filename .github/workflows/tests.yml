@@ -6,10 +6,13 @@ jobs:
   run-unit-tests:
 
     runs-on: ubuntu-latest
-    container: compucorp/php-fpm.civicrm:8.3
+    container:
+      image: compucorp/php-fpm.civicrm:8.1
+      options: --user root
 
     env:
       CIVICRM_EXTENSIONS_DIR: site/web/sites/all/modules/civicrm/tools/extensions
+      CIVICRM_SETTINGS_DIR: site/web/sites/default
 
     services:
       mysql:
@@ -28,9 +31,9 @@ jobs:
         run: amp config:set --mysql_dsn=mysql://root:root@mysql:3306
 
       - name: Build Drupal site
-        run: civibuild create drupal-clean --civi-ver 5.80.0 --cms-ver 7.101 --web-root $GITHUB_WORKSPACE/site
+        run: /opt/buildkit/bin/civibuild create drupal-clean --civi-ver 6.4.1 --cms-ver 7.100 --web-root $GITHUB_WORKSPACE/site
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v2
         with:
           path: ${{ env.CIVICRM_EXTENSIONS_DIR }}/io.compuco.svixclient
 

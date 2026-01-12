@@ -101,7 +101,7 @@ class CRM_Svixclient_FilterBuilder_AbstractFilterBuilderTest extends BaseHeadles
    * Malicious input trying to break out of the JS string context.
    */
   public function testEscapeJsStringStripeInjectionAttempt(): void {
-    // Attempt to inject: acct_'; alert('xss'); //
+    // Attempt to inject: acct_'; alert('xss'); //.
     $malicious = "acct_'; alert('xss'); //";
     $result = $this->filterBuilder->publicEscapeJsString($malicious);
     // Single quotes should be escaped, preventing the injection.
@@ -114,7 +114,7 @@ class CRM_Svixclient_FilterBuilder_AbstractFilterBuilderTest extends BaseHeadles
    * Malicious input with newline trying to break the JS function.
    */
   public function testEscapeJsStringGoCardlessInjectionAttempt(): void {
-    // Attempt to inject: OR001\n'; return null; //
+    // Attempt to inject: OR001\n'; return null; //.
     $malicious = "OR001\n'; return null; //";
     $result = $this->filterBuilder->publicEscapeJsString($malicious);
     // Newline and single quotes should be escaped.

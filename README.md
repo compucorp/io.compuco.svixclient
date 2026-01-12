@@ -62,7 +62,7 @@ This is an [extension for CiviCRM](https://docs.civicrm.org/sysadmin/en/latest/c
 ## Requirements
 
 - CiviCRM 6.4+
-- PHP 8.3+
+- PHP 8.1+
 - Svix PHP SDK (for webhook signature verification)
 
 ## Installation

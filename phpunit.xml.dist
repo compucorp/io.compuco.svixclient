@@ -24,4 +24,9 @@
       <directory>./CRM/Svixclient/DAO</directory>
     </exclude>
   </coverage>
+  <listeners>
+    <listener class="Civi\Test\CiviTestListener">
+      <arguments/>
+    </listener>
+  </listeners>
 </phpunit>

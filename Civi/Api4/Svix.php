@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Civi\Api4;
 
-use Action\Svix\VerifyWebhook;
-use Generic\AbstractEntity;
+use Civi\Api4\Action\Svix\VerifyWebhook;
+use Civi\Api4\Generic\AbstractEntity;
 use Civi\Api4\Generic\BasicGetFieldsAction;
 
 /**
@@ -24,7 +24,7 @@ class Svix extends AbstractEntity {
    * @param bool $checkPermissions
    *   Whether to check permissions.
    *
-   * @return Action\Svix\VerifyWebhook
+   * @return \Civi\Api4\Action\Svix\VerifyWebhook
    *   The verify webhook action.
    */
   public static function verifyWebhook(bool $checkPermissions = TRUE): VerifyWebhook {
