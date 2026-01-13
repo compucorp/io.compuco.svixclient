@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<ruleset name="PHP Custom Ruleset">
+    <description>Drupal Coder Ruleset for CiviCRM Extensions</description>
+
+    <rule ref="Drupal">
+        <!-- CiviCRM uses CRM_Extension_Class naming convention -->
+        <exclude name="Drupal.Classes.ClassFileName.NoMatch"/>
+        <exclude name="Drupal.NamingConventions.ValidClassName.NoUnderscores"/>
+        <!-- CiviCRM API4 uses _run method naming -->
+        <exclude name="Drupal.NamingConventions.ValidFunctionName.ScopeNotCamelCaps"/>
+    </rule>
+
+    <!-- Exclude generated and auto-managed files -->
+    <exclude-pattern>svixclient.civix.php</exclude-pattern>
+    <exclude-pattern>svixclient.php</exclude-pattern>
+    <exclude-pattern>vendor/*</exclude-pattern>
+    <exclude-pattern>mixin/*</exclude-pattern>
+    <exclude-pattern>bin/*</exclude-pattern>
+    <exclude-pattern>ang/*</exclude-pattern>
+    <exclude-pattern>managed/*</exclude-pattern>
+    <exclude-pattern>schema/*</exclude-pattern>
+    <exclude-pattern>settings/*</exclude-pattern>
+    <exclude-pattern>CRM/Svixclient/DAO/*</exclude-pattern>
+    <exclude-pattern>CRM/Svixclient/Upgrader.php</exclude-pattern>
+</ruleset>
