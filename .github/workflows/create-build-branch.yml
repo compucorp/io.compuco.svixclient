@@ -1,0 +1,93 @@
+name: Create Build Branch
+
+on:
+  pull_request:
+    types: [opened, synchronize, closed]
+
+jobs:
+  # Create PR build branch for testing (on PR open/update)
+  create-pr-build:
+    if: github.event.action == 'opened' || github.event.action == 'synchronize'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v2
+
+      - name: Delete existing PR build branch
+        uses: dawidd6/action-delete-branch@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branches: ${{ github.head_ref }}-build
+          soft_fail: true
+
+      - name: Create PR build branch
+        uses: peterjgrainger/action-create-branch@v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          branch: ${{ github.head_ref }}-build
+
+      - name: Install dependencies (production only)
+        run: composer install --no-dev
+
+      - name: Remove gitignore file
+        run: rm -rf .gitignore
+
+      - name: Commit and push changes
+        uses: EndBug/add-and-commit@v7
+        with:
+          branch: ${{ github.head_ref }}-build
+          message: 'Add vendor folder for testing'
+          add: '["./vendor -f", "./.gitignore"]'
+          push: true
+
+  # Create base branch build (e.g., master-build) when PR is merged
+  create-base-build:
+    if: github.event.action == 'closed' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v2
+
+      - name: Delete existing base build branch
+        uses: dawidd6/action-delete-branch@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branches: ${{ github.event.pull_request.base.ref }}-build
+          soft_fail: true
+
+      - name: Create base build branch
+        uses: peterjgrainger/action-create-branch@v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          branch: ${{ github.event.pull_request.base.ref }}-build
+
+      - name: Install dependencies (production only)
+        run: composer install --no-dev
+
+      - name: Remove gitignore file
+        run: rm -rf .gitignore
+
+      - name: Commit and push changes
+        uses: EndBug/add-and-commit@v7
+        with:
+          branch: ${{ github.event.pull_request.base.ref }}-build
+          message: 'Add vendor folder and remove gitignore'
+          add: '["./vendor -f", "./.gitignore"]'
+          push: true
+
+  # Cleanup PR build branch when PR is closed (merged or not)
+  cleanup-pr-build:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Delete PR build branch
+        uses: dawidd6/action-delete-branch@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branches: ${{ github.head_ref }}-build
+          soft_fail: true
