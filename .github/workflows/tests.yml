@@ -7,7 +7,7 @@ jobs:
 
     runs-on: ubuntu-latest
     container:
-      image: compucorp/php-fpm.civicrm:8.1
+      image: compucorp/php-fpm.civicrm:8.2
       options: --user root
 
     env:
