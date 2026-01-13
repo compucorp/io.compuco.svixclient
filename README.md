@@ -366,6 +366,43 @@ phpunit9
 phpunit9 --filter testEscapeJsStringStripeAccountId
 ```
 
+## Build Branches
+
+This extension uses automated build branches that include the `vendor/` folder with all dependencies. This is required for Drupal makefile deployments.
+
+### Branch Naming Pattern
+
+| Source | Build Branch | Purpose |
+|--------|--------------|---------|
+| `master` | `master-build` | Production deployment |
+| `feature-branch` | `feature-branch-build` | Testing before merge |
+
+### How It Works
+
+1. **PR opened/updated** → Creates `{branch-name}-build` for testing
+2. **PR merged** → Updates `{base-branch}-build` (e.g., `master-build`)
+3. **PR closed** → Deletes `{branch-name}-build` (cleanup)
+
+### Usage in Makefile
+
+```yaml
+# Production (use master-build)
+io.compuco.svixclient:
+  download:
+    type: "git"
+    url: "git@github.com:compucorp/io.compuco.svixclient.git"
+    branch: "master-build"
+  destination: "modules/contrib/civicrm/ext"
+
+# Testing a PR (use feature-branch-build)
+io.compuco.svixclient:
+  download:
+    type: "git"
+    url: "git@github.com:compucorp/io.compuco.svixclient.git"
+    branch: "CIVIMM-454-feature-build"
+  destination: "modules/contrib/civicrm/ext"
+```
+
 ## License
 
 AGPL-3.0
