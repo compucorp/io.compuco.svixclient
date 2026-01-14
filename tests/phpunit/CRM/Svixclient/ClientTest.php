@@ -1,5 +1,8 @@
 <?php
 
+use Civi\Svixclient\Filter\FilterStrategyInterface;
+use Civi\Svixclient\Filter\SimpleFieldFilter;
+
 /**
  * Tests for the CRM_Svixclient_Client class.
  *
@@ -45,9 +48,22 @@ class CRM_Svixclient_ClientTest extends BaseHeadlessTest {
    * Test that exception is thrown when no API key is configured.
    */
   public function testThrowsExceptionWhenNoApiKey(): void {
-    // Ensure no API key is set.
-    \Civi::settings()->set('svix_api_key', NULL);
+    // Ensure no API key is set via environment.
     putenv('SVIX_API_KEY');
+
+    // Clear the setting and flush cache.
+    \Civi::settings()->set('svix_api_key', NULL);
+    \Civi::settings()->revert('svix_api_key');
+
+    // Check if API key is still available (e.g., from civicrm.settings.php).
+    $keyFromSettings = \Civi::settings()->get('svix_api_key');
+    $keyFromEnv = getenv('SVIX_API_KEY');
+
+    if (!empty($keyFromSettings) || !empty($keyFromEnv)) {
+      $this->markTestSkipped(
+        'Cannot test missing API key when key is configured in civicrm.settings.php or environment'
+      );
+    }
 
     $this->expectException(\CRM_Core_Exception::class);
     $this->expectExceptionMessage('Svix API key not configured');
@@ -128,6 +144,91 @@ class CRM_Svixclient_ClientTest extends BaseHeadlessTest {
     catch (\Exception $e) {
       $this->assertTrue(TRUE);
     }
+  }
+
+  /**
+   * Test buildRoutingFilter generates correct JavaScript for Stripe.
+   */
+  public function testBuildRoutingFilterForStripe(): void {
+    $filter = CRM_Svixclient_Client::buildRoutingFilter('account', 'acct_1234567890');
+
+    // Verify the filter is a valid JavaScript function.
+    $this->assertStringContainsString('function handler(input)', $filter);
+    $this->assertStringContainsString("input.account !== 'acct_1234567890'", $filter);
+    $this->assertStringContainsString('return null', $filter);
+    $this->assertStringContainsString('return { payload: input }', $filter);
+  }
+
+  /**
+   * Test buildRoutingFilter with different field (e.g., GoCardless).
+   */
+  public function testBuildRoutingFilterForGoCardless(): void {
+    $filter = CRM_Svixclient_Client::buildRoutingFilter('organisation_id', 'OR000123');
+
+    $this->assertStringContainsString('function handler(input)', $filter);
+    $this->assertStringContainsString("input.organisation_id !== 'OR000123'", $filter);
+  }
+
+  /**
+   * Test buildRoutingFilter with nested field path.
+   */
+  public function testBuildRoutingFilterWithNestedField(): void {
+    $filter = CRM_Svixclient_Client::buildRoutingFilter('links.organisation', 'OR000123');
+
+    $this->assertStringContainsString('function handler(input)', $filter);
+    $this->assertStringContainsString("input.links.organisation !== 'OR000123'", $filter);
+  }
+
+  /**
+   * Test buildRoutingFilter properly escapes special characters.
+   */
+  public function testBuildRoutingFilterEscapesSpecialChars(): void {
+    // Test with quotes.
+    $filter = CRM_Svixclient_Client::buildRoutingFilter('account', "acct_with'quote");
+
+    // The quote should be escaped.
+    $this->assertStringContainsString('function handler(input)', $filter);
+    // The raw unescaped string should not appear.
+    $this->assertStringNotContainsString("'acct_with'quote'", $filter);
+  }
+
+  /**
+   * Test buildFilter accepts FilterStrategyInterface implementation.
+   */
+  public function testBuildFilterAcceptsFilterStrategy(): void {
+    $filterStrategy = new SimpleFieldFilter('account', 'acct_test');
+
+    $js = CRM_Svixclient_Client::buildFilter($filterStrategy);
+
+    $this->assertStringContainsString('function handler(input)', $js);
+    $this->assertStringContainsString("input.account !== 'acct_test'", $js);
+  }
+
+  /**
+   * Test buildFilter works with custom filter implementation.
+   */
+  public function testBuildFilterWorksWithCustomImplementation(): void {
+    // Create a custom filter using anonymous class.
+    $customFilter = new class implements FilterStrategyInterface {
+
+      /**
+       * {@inheritdoc}
+       */
+      public function build(): string {
+        return <<<JS
+function handler(input) {
+    if (!input.custom_field) return null;
+    return { payload: input };
+}
+JS;
+      }
+
+    };
+
+    $js = CRM_Svixclient_Client::buildFilter($customFilter);
+
+    $this->assertStringContainsString('function handler(input)', $js);
+    $this->assertStringContainsString('input.custom_field', $js);
   }
 
 }

@@ -66,7 +66,7 @@ return [
     'name' => 'SavedSearch_SvixDestinations',
     'entity' => 'SavedSearch',
     'cleanup' => 'always',
-    'update' => 'unmodified',
+    'update' => 'always',
     'params' => [
       'version' => 4,
       'values' => [
@@ -81,7 +81,7 @@ return [
             'svix_destination_id',
             'payment_processor_id.name',
             'payment_processor_id.payment_processor_type_id:label',
-            'created_by',
+            'created_by.display_name',
             'created_date',
           ],
           'orderBy' => [],
@@ -100,7 +100,7 @@ return [
     'name' => 'SavedSearch_SvixDestinations_SearchDisplay_Table',
     'entity' => 'SearchDisplay',
     'cleanup' => 'always',
-    'update' => 'unmodified',
+    'update' => 'always',
     'params' => [
       'version' => 4,
       'values' => [
@@ -154,11 +154,10 @@ return [
               'dataType' => 'String',
               'label' => E::ts('Svix Destination ID'),
               'sortable' => TRUE,
-              'rewrite' => '',
             ],
             [
               'type' => 'field',
-              'key' => 'created_by',
+              'key' => 'created_by.display_name',
               'dataType' => 'String',
               'label' => E::ts('Created By'),
               'sortable' => TRUE,
@@ -170,8 +169,25 @@ return [
               'label' => E::ts('Created Date'),
               'sortable' => TRUE,
             ],
+            [
+              'type' => 'links',
+              'label' => E::ts('Actions'),
+              'links' => [
+                [
+                  'path' => '',
+                  'icon' => 'fa-trash',
+                  'text' => E::ts('Delete'),
+                  'style' => 'danger',
+                  'condition' => [],
+                  'task' => 'delete',
+                  'entity' => 'SvixDestination',
+                  'join' => '',
+                  'target' => 'crm-popup',
+                ],
+              ],
+            ],
           ],
-          'actions' => FALSE,
+          'actions' => TRUE,
           'classes' => [
             'table',
             'table-striped',

@@ -26,7 +26,6 @@ class SvixDestinationTest extends \BaseHeadlessTest {
       ->addValue('source_id', 'src_test_123')
       ->addValue('svix_destination_id', 'dest_test_456')
       ->addValue('payment_processor_id', $processor['id'])
-      ->addValue('created_by', 'unit_test')
       ->execute();
 
     $this->assertCount(1, $result);
@@ -34,7 +33,7 @@ class SvixDestinationTest extends \BaseHeadlessTest {
     $this->assertEquals('src_test_123', $destination['source_id']);
     $this->assertEquals('dest_test_456', $destination['svix_destination_id']);
     $this->assertEquals($processor['id'], $destination['payment_processor_id']);
-    $this->assertEquals('unit_test', $destination['created_by']);
+    // created_by is readonly and auto-set by CiviCRM.
     $this->assertNotEmpty($destination['created_date']);
   }
 
@@ -56,7 +55,6 @@ class SvixDestinationTest extends \BaseHeadlessTest {
       ->addValue('source_id', 'src_get_test')
       ->addValue('svix_destination_id', 'dest_get_test')
       ->addValue('payment_processor_id', $processor['id'])
-      ->addValue('created_by', 'get_test')
       ->execute();
 
     // Get the destination.
@@ -86,7 +84,6 @@ class SvixDestinationTest extends \BaseHeadlessTest {
       ->addValue('source_id', 'src_delete_test')
       ->addValue('svix_destination_id', 'dest_delete_test')
       ->addValue('payment_processor_id', $processor['id'])
-      ->addValue('created_by', 'delete_test')
       ->execute()
       ->first();
 
@@ -123,7 +120,6 @@ class SvixDestinationTest extends \BaseHeadlessTest {
       ->addValue('source_id', 'src_cascade_test')
       ->addValue('svix_destination_id', 'dest_cascade_test')
       ->addValue('payment_processor_id', $processor['id'])
-      ->addValue('created_by', 'cascade_test')
       ->execute()
       ->first();
 

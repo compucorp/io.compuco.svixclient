@@ -31,22 +31,32 @@ cv ext:enable io.compuco.svixclient
 
 1. **CRM_Svixclient_Client** (`CRM/Svixclient/Client.php`)
    - Main Svix API client
-   - Methods: `createDestination()`, `deleteDestination()`, `getDestination()`, `verifyWebhook()`
+   - Instance methods: `createDestination()`, `setTransformation()`, `getDestinationSecret()`, `deleteDestination()`, `getDestination()`
+   - Static methods: `verifyWebhook()`, `buildRoutingFilter()`, `buildFilter()`
+   - Server URL from `\Civi::settings()->get('svix_server_url')` (defaults to US: `https://api.svix.com`)
    - API key from `\Civi::settings()->get('svix_api_key')` or `SVIX_API_KEY` env var
    - Uses Svix SDK for webhook signature verification only
    - Uses REST API (cURL) for Ingest destination management (no SDK support)
+   - **Important**: Transformations must be set via separate `setTransformation()` call after creating destination
 
-2. **SvixDestination Entity** (`schema/SvixDestination.entityType.php`)
+2. **Filter Strategy Pattern** (`Civi/Svixclient/Filter/`)
+   - **FilterStrategyInterface** - Contract for filter builders (Strategy Pattern)
+   - **SimpleFieldFilter** - Concrete strategy for simple field matching
+   - Usage:
+     - Simple: `CRM_Svixclient_Client::buildRoutingFilter('account', 'acct_xxx')`
+     - Extensible: `CRM_Svixclient_Client::buildFilter(new SimpleFieldFilter('account', 'acct_xxx'))`
+   - **Why Strategy Pattern**: Prevents autoloading issues - payment extensions use composition (instantiation) instead of inheritance, avoiding compile-time class dependencies
+
+3. **SvixDestination Entity** (`schema/SvixDestination.entityType.php`)
    - Table: `civicrm_svix_destination`
    - Stores mapping between Svix destinations and CiviCRM payment processors
    - FK to payment_processor with CASCADE delete
+   - Stores `signing_secret` for webhook verification (fetched from Svix API after creation)
 
-3. **Filter Builders** (`CRM/Svixclient/FilterBuilder/`)
-   - `FilterBuilderInterface` - contract for filter builders
-   - `AbstractFilterBuilder` - base class with `escapeJsString()` helper (uses `json_encode` for secure JS escaping)
-   - Payment extensions (Stripe, GoCardless) implement their own builders
+4. **Post Hooks** (`Civi/Svixclient/Hook/Post/`)
+   - **DeleteSvixDestination** - Deletes destination from Svix when CiviCRM record is deleted
 
-4. **API4 Endpoints** (`Civi/Api4/`)
+5. **API4 Endpoints** (`Civi/Api4/`)
    - `SvixDestination` - DAOEntity for CRUD operations
    - `Svix::verifyWebhook()` - webhook signature verification
 
@@ -68,7 +78,11 @@ cv ext:enable io.compuco.svixclient
 - Framework: PHPUnit 9
 - Bootstrap: `tests/phpunit/bootstrap.php`
 - Base class: `BaseHeadlessTest` (headless + transactional)
-- Test locations: `tests/phpunit/CRM/` and `tests/phpunit/Civi/`
+- Test locations:
+  - `tests/phpunit/CRM/Svixclient/` - Client tests
+  - `tests/phpunit/Civi/Api4/` - API4 tests
+  - `tests/phpunit/Civi/Svixclient/Filter/` - Filter strategy tests
+  - `tests/phpunit/Civi/Svixclient/Hook/Post/` - Hook tests
 
 Run a single test:
 ```bash
