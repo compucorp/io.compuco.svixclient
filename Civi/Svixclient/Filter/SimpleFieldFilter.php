@@ -66,12 +66,12 @@ class SimpleFieldFilter implements FilterStrategyInterface {
    * {@inheritdoc}
    */
   public function build(): string {
-    $escapedField = $this->escapeJsString($this->field);
+    // Only escape the value - field is a property accessor, not a string.
     $escapedValue = $this->escapeJsString($this->value);
 
     return <<<JS
 function handler(input) {
-    if (input.{$escapedField} !== '{$escapedValue}') return null;
+    if (input.{$this->field} !== '{$escapedValue}') return null;
     return { payload: input };
 }
 JS;

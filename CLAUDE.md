@@ -29,34 +29,52 @@ cv ext:enable io.compuco.svixclient
 
 ### Core Components
 
-1. **CRM_Svixclient_Client** (`CRM/Svixclient/Client.php`)
-   - Main Svix API client
+1. **SvixWebhookMiddleware** (`Civi/Svixclient/Service/SvixWebhookMiddleware.php`)
+   - **Primary service for payment processors** - use this instead of Client directly
+   - Available via DI: `\Civi::service('svix.webhook_middleware')`
+   - Methods:
+     - `isSvixRequest()` - Check if current request has Svix headers
+     - `verify($payload, $processorTypeName)` - Verify webhook signature
+     - `isConfigured()` - Check if Svix API key is configured
+     - `getConfigurationStatus()` - Get detailed config status with message
+     - `registerDestination($processorType, $processorId, $routingValue, $contactId)` - Full registration workflow
+     - `deleteDestination($paymentProcessorId)` - Delete destination from Svix and DB
+     - `isEnabledForProcessorType($processorTypeName)` - Check if Svix is enabled for processor
+
+2. **SvixProcessorConfig** (`Civi/Svixclient/Enum/SvixProcessorConfig.php`)
+   - Enum defining supported payment processors
+   - Cases: `StripeConnect`, `Gocardless`
+   - Methods:
+     - `getRoutingField()` - JSON path for routing (e.g., 'account', 'links.organisation')
+     - `getSourceIdSetting()` - Setting name for source ID
+     - `getDescriptionTemplate()` - Template for destination descriptions
+     - `getSourceId()` - Get source ID from settings
+     - `fromProcessorType($name)` - Factory method
+
+3. **CRM_Svixclient_Client** (`CRM/Svixclient/Client.php`)
+   - Low-level Svix API client (used internally by middleware)
    - Instance methods: `createDestination()`, `setTransformation()`, `getDestinationSecret()`, `deleteDestination()`, `getDestination()`
    - Static methods: `verifyWebhook()`, `buildRoutingFilter()`, `buildFilter()`
    - Server URL from `\Civi::settings()->get('svix_server_url')` (defaults to US: `https://api.svix.com`)
    - API key from `\Civi::settings()->get('svix_api_key')` or `SVIX_API_KEY` env var
-   - Uses Svix SDK for webhook signature verification only
-   - Uses REST API (cURL) for Ingest destination management (no SDK support)
-   - **Important**: Transformations must be set via separate `setTransformation()` call after creating destination
 
-2. **Filter Strategy Pattern** (`Civi/Svixclient/Filter/`)
+4. **Filter Strategy Pattern** (`Civi/Svixclient/Filter/`)
    - **FilterStrategyInterface** - Contract for filter builders (Strategy Pattern)
    - **SimpleFieldFilter** - Concrete strategy for simple field matching
-   - Usage:
-     - Simple: `CRM_Svixclient_Client::buildRoutingFilter('account', 'acct_xxx')`
-     - Extensible: `CRM_Svixclient_Client::buildFilter(new SimpleFieldFilter('account', 'acct_xxx'))`
-   - **Why Strategy Pattern**: Prevents autoloading issues - payment extensions use composition (instantiation) instead of inheritance, avoiding compile-time class dependencies
+   - **Why Strategy Pattern**: Prevents autoloading issues - payment extensions use composition instead of inheritance
 
-3. **SvixDestination Entity** (`schema/SvixDestination.entityType.php`)
+5. **SvixDestination Entity** (`schema/SvixDestination.entityType.php`)
    - Table: `civicrm_svix_destination`
-   - Stores mapping between Svix destinations and CiviCRM payment processors
+   - Fields: `source_id`, `svix_destination_id`, `payment_processor_id`, `signing_secret`, `created_by` (FK to Contact), `created_date`
    - FK to payment_processor with CASCADE delete
-   - Stores `signing_secret` for webhook verification (fetched from Svix API after creation)
 
-4. **Post Hooks** (`Civi/Svixclient/Hook/Post/`)
+6. **ServiceContainer** (`Civi/Svixclient/Hook/Container/ServiceContainer.php`)
+   - Registers `svix.webhook_middleware` service with DI container
+
+7. **Post Hooks** (`Civi/Svixclient/Hook/Post/`)
    - **DeleteSvixDestination** - Deletes destination from Svix when CiviCRM record is deleted
 
-5. **API4 Endpoints** (`Civi/Api4/`)
+8. **API4 Endpoints** (`Civi/Api4/`)
    - `SvixDestination` - DAOEntity for CRUD operations
    - `Svix::verifyWebhook()` - webhook signature verification
 
@@ -83,6 +101,7 @@ cv ext:enable io.compuco.svixclient
   - `tests/phpunit/Civi/Api4/` - API4 tests
   - `tests/phpunit/Civi/Svixclient/Filter/` - Filter strategy tests
   - `tests/phpunit/Civi/Svixclient/Hook/Post/` - Hook tests
+  - `tests/phpunit/Civi/Svixclient/Service/` - Middleware tests
 
 Run a single test:
 ```bash

@@ -33,7 +33,7 @@ class DeleteSvixDestination {
    *
    * @var object|null
    */
-  private $objectRef;
+  private ?object $objectRef;
 
   /**
    * Constructor.
@@ -47,7 +47,7 @@ class DeleteSvixDestination {
    * @param object|null $objectRef
    *   The DAO object containing the record data.
    */
-  public function __construct(string $op, string $objectName, ?int $id, $objectRef) {
+  public function __construct(string $op, string $objectName, ?int $id, ?object $objectRef) {
     $this->op = $op;
     $this->objectName = $objectName;
     $this->id = $id;

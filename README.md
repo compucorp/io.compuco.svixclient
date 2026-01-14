@@ -89,16 +89,16 @@ $civicrm_setting['Svix']['svix_server_url'] = 'https://api.eu.svix.com';  // or 
 $civicrm_setting['Svix']['svix_api_key'] = 'sk_your_svix_api_key';
 
 // Source IDs (one per payment provider, shared across all sites)
-$civicrm_setting['Svix']['svix_stripe_source_id'] = 'src_stripe_xxx';
-$civicrm_setting['Svix']['svix_gocardless_source_id'] = 'src_gocardless_xxx';
+$civicrm_setting['Svix']['svix_source_stripe_connect'] = 'src_stripe_xxx';
+$civicrm_setting['Svix']['svix_source_gocardless'] = 'src_gocardless_xxx';
 ```
 
 | Setting | Description |
 |---------|-------------|
 | `svix_server_url` | Svix API server URL. Use `https://api.eu.svix.com` for EU accounts, `https://api.svix.com` for US (default) |
 | `svix_api_key` | Your Svix API key. Can also be set via `SVIX_API_KEY` environment variable |
-| `svix_stripe_source_id` | Svix source ID for Stripe webhooks |
-| `svix_gocardless_source_id` | Svix source ID for GoCardless webhooks |
+| `svix_source_stripe_connect` | Svix source ID for Stripe Connect webhooks |
+| `svix_source_gocardless` | Svix source ID for GoCardless webhooks |
 
 **Important:** The signing secret for webhook verification is stored per-destination in the database (fetched automatically from Svix API when creating destinations).
 
@@ -116,79 +116,96 @@ $civicrm_setting['Svix']['svix_gocardless_source_id'] = 'src_gocardless_xxx';
 
 ## Usage
 
-### Creating a Destination
+### Using the Middleware (Recommended)
+
+The `SvixWebhookMiddleware` service provides a high-level API for payment processors.
+
+#### Registering a Destination
 
 ```php
-// In your payment extension (e.g., Stripe)
-// Build the routing filter using the built-in helper
+// In your payment extension (e.g., Stripe OAuth callback)
+$middleware = \Civi::service('svix.webhook_middleware');
+
+// Check if Svix is configured
+if (!$middleware->isConfigured()) {
+    throw new \Exception('Svix is not configured');
+}
+
+// Register destination - handles everything automatically
+$destinationId = $middleware->registerDestination(
+    'Stripe Connect',           // Processor type (must match SvixProcessorConfig enum)
+    $paymentProcessorId,        // CiviCRM payment processor ID
+    'acct_xxx',                 // Routing value (Stripe account ID)
+    $contactId                  // Optional: contact who created this (defaults to logged-in user)
+);
+```
+
+#### Deleting a Destination
+
+```php
+$middleware = \Civi::service('svix.webhook_middleware');
+
+// Deletes from both Svix and database
+$middleware->deleteDestination($paymentProcessorId);
+```
+
+#### Verifying Webhooks
+
+```php
+$middleware = \Civi::service('svix.webhook_middleware');
+
+// Check if this is a Svix-forwarded webhook
+if ($middleware->isSvixRequest()) {
+    $result = $middleware->verify($payload, 'Stripe Connect');
+
+    if (!$result['valid']) {
+        throw new \Exception($result['error']);
+    }
+
+    // Process the webhook...
+}
+```
+
+#### Checking Configuration Status
+
+```php
+$middleware = \Civi::service('svix.webhook_middleware');
+
+// Simple check
+if ($middleware->isConfigured()) {
+    // Svix API key is configured
+}
+
+// Detailed status (useful for admin UI)
+$status = $middleware->getConfigurationStatus();
+// Returns: ['configured' => bool, 'message' => string]
+
+// Check if enabled for specific processor
+if ($middleware->isEnabledForProcessorType('Stripe Connect')) {
+    // A Svix destination exists for this processor type
+}
+```
+
+### Using the Low-Level Client
+
+For advanced use cases, you can use the `CRM_Svixclient_Client` directly:
+
+```php
+// Create destination manually
+$client = new CRM_Svixclient_Client();
 $filter = CRM_Svixclient_Client::buildRoutingFilter('account', 'acct_xxx');
 
-// Create the Svix client
-$client = new CRM_Svixclient_Client();
-
-// Create destination in Svix
-$sourceId = \Civi::settings()->get('svix_stripe_source_id');
 $destination = $client->createDestination(
     sourceId: $sourceId,
-    url: 'https://mysite.org/civicrm/payment/ipn/stripe',
+    url: 'https://mysite.org/civicrm/stripe/webhook',
     description: 'MySite Stripe Webhooks'
 );
 
-// Set the transformation (filter script) - must be done separately
 $client->setTransformation($sourceId, $destination['id'], $filter);
-
-// Get the signing secret for webhook verification
 $signingSecret = $client->getDestinationSecret($sourceId, $destination['id']);
 
-// Store in CiviCRM database (including signing secret)
-\Civi\Api4\SvixDestination::create()
-    ->addValue('source_id', $sourceId)
-    ->addValue('svix_destination_id', $destination['id'])
-    ->addValue('payment_processor_id', $processorId)
-    ->addValue('signing_secret', $signingSecret)
-    ->addValue('created_by', 'stripe_oauth')
-    ->execute();
-```
-
-### Deleting a Destination
-
-```php
-$client = new CRM_Svixclient_Client();
-
-// Delete from Svix
-$client->deleteDestination($sourceId, $destinationId);
-
-// Delete from CiviCRM database
-\Civi\Api4\SvixDestination::delete()
-    ->addWhere('svix_destination_id', '=', $destinationId)
-    ->execute();
-```
-
-### Verifying Webhooks
-
-```php
-// Using the API
-$result = \Civi\Api4\Svix::verifyWebhook()
-    ->setPayload($rawPayload)
-    ->setHeaders([
-        'svix-id' => $headers['svix-id'],
-        'svix-timestamp' => $headers['svix-timestamp'],
-        'svix-signature' => $headers['svix-signature'],
-    ])
-    ->setSecret($webhookSecret)
-    ->execute();
-
-if ($result->first()['valid']) {
-    // Process the webhook
-}
-
-// Or using the Client class directly
-try {
-    CRM_Svixclient_Client::verifyWebhook($payload, $headers, $secret);
-    // Webhook is valid
-} catch (\Exception $e) {
-    // Verification failed
-}
+// Verify webhook directly
+CRM_Svixclient_Client::verifyWebhook($payload, $headers, $secret);
 ```
 
 ## Building Routing Filters
@@ -327,8 +344,8 @@ JavaScript injection. This handles:
 | id | int | Primary key |
 | source_id | string | Svix source ID |
 | svix_destination_id | string | Svix destination ID |
-| payment_processor_id | int | FK to payment processor |
-| created_by | string | Creator identifier |
+| payment_processor_id | int | FK to payment processor (CASCADE delete) |
+| created_by | int | FK to Contact who created this destination |
 | created_date | timestamp | Creation timestamp |
 | signing_secret | string | Webhook signing secret for verification |
 
@@ -361,6 +378,30 @@ This SearchKit-based view displays:
 - Created by and creation date
 
 Requires "administer CiviCRM" permission.
+
+## Adding New Payment Processors
+
+To add support for a new payment processor:
+
+1. **Add case to SvixProcessorConfig enum** (`Civi/Svixclient/Enum/SvixProcessorConfig.php`):
+   ```php
+   case NewProcessor = 'New Processor';
+   ```
+
+2. **Add match arms** for the new processor:
+   - `getRoutingField()` - JSON path to match (e.g., 'account_id')
+   - `getSourceIdSetting()` - Setting name (e.g., 'svix_source_new_processor')
+   - `getDescriptionTemplate()` - Template with `{value}` placeholder
+
+3. **Add webhook path** in `SvixWebhookMiddleware::getWebhookUrlForProcessor()`:
+   ```php
+   'New Processor' => 'civicrm/newprocessor/webhook',
+   ```
+
+4. **Configure the source ID** in `civicrm.settings.php`:
+   ```php
+   $civicrm_setting['Svix']['svix_source_new_processor'] = 'src_xxx';
+   ```
 
 ## Multi-Site Support
 
