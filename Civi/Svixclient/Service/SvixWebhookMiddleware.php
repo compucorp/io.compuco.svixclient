@@ -212,7 +212,8 @@ class SvixWebhookMiddleware {
    * Register a Svix destination for a payment processor.
    *
    * Creates a new webhook destination in Svix that routes webhooks
-   * for the specified routing value to this CiviCRM site.
+   * for the specified routing value to this CiviCRM site. Checks for
+   * existing destinations and disables duplicates.
    *
    * @param string $processorType
    *   The payment processor type name (e.g., 'Stripe Connect').
@@ -245,17 +246,122 @@ class SvixWebhookMiddleware {
       throw new \CRM_Core_Exception("Svix source ID not configured for {$processorType}. Set the '{$config->getSourceIdSetting()}' setting.");
     }
 
-    // Build routing filter.
-    $filter = \CRM_Svixclient_Client::buildRoutingFilter($config->getRoutingField(), $routingValue);
-
-    // Build description.
-    $description = str_replace('{value}', $routingValue, $config->getDescriptionTemplate());
-
     // Get webhook URL.
     $webhookUrl = $this->getWebhookUrlForProcessor($processorType);
 
-    // Create destination via Svix client.
+    // Build routing filter.
+    $filter = \CRM_Svixclient_Client::buildRoutingFilter($config->getRoutingField(), $routingValue);
+
+    // Disable any existing destinations for this URL.
     $client = new \CRM_Svixclient_Client();
+    $this->disableExistingDestinations($client, $sourceId, $webhookUrl);
+
+    // Create new destination.
+    return $this->createNewDestination(
+      $client,
+      $sourceId,
+      $webhookUrl,
+      $filter,
+      $config->getDescriptionTemplate(),
+      $routingValue,
+      $paymentProcessorId,
+      $contactId
+    );
+  }
+
+  /**
+   * Find and disable existing destinations with the same URL.
+   *
+   * Ensures only one destination per site URL. Disables all existing
+   * destinations that match the webhook URL before creating a new one.
+   *
+   * @param \CRM_Svixclient_Client $client
+   *   The Svix client.
+   * @param string $sourceId
+   *   The Svix source ID.
+   * @param string $webhookUrl
+   *   The webhook URL to match.
+   */
+  private function disableExistingDestinations(
+    \CRM_Svixclient_Client $client,
+    string $sourceId,
+    string $webhookUrl,
+  ): void {
+    $destinations = $client->listDestinations($sourceId);
+
+    \Civi::log()->debug('Checking for existing destinations to disable', [
+      'source_id' => $sourceId,
+      'webhook_url' => $webhookUrl,
+      'total_destinations' => count($destinations),
+    ]);
+
+    foreach ($destinations as $dest) {
+      // Check if URL matches (normalize by removing trailing ? or /).
+      $destUrl = rtrim($dest['url'] ?? '', '?/');
+      $compareUrl = rtrim($webhookUrl, '?/');
+
+      \Civi::log()->debug('Comparing destination URL', [
+        'destination_id' => $dest['id'] ?? 'unknown',
+        'dest_url' => $destUrl,
+        'compare_url' => $compareUrl,
+        'match' => ($destUrl === $compareUrl),
+      ]);
+
+      if ($destUrl !== $compareUrl) {
+        continue;
+      }
+
+      // Skip already disabled destinations.
+      if (!empty($dest['disabled'])) {
+        continue;
+      }
+
+      \Civi::log()->info('Disabling existing Svix destination for URL', [
+        'source_id' => $sourceId,
+        'destination_id' => $dest['id'],
+        'url' => $destUrl,
+      ]);
+
+      $client->disableDestination($sourceId, $dest['id']);
+    }
+  }
+
+  /**
+   * Create a new Svix destination.
+   *
+   * @param \CRM_Svixclient_Client $client
+   *   The Svix client.
+   * @param string $sourceId
+   *   The Svix source ID.
+   * @param string $webhookUrl
+   *   The webhook URL.
+   * @param string $filter
+   *   The routing filter code.
+   * @param string $descriptionTemplate
+   *   The description template.
+   * @param string $routingValue
+   *   The routing value.
+   * @param int $paymentProcessorId
+   *   The CiviCRM payment processor ID.
+   * @param int|null $contactId
+   *   Optional contact ID.
+   *
+   * @return string
+   *   The new destination ID.
+   */
+  private function createNewDestination(
+    \CRM_Svixclient_Client $client,
+    string $sourceId,
+    string $webhookUrl,
+    string $filter,
+    string $descriptionTemplate,
+    string $routingValue,
+    int $paymentProcessorId,
+    ?int $contactId,
+  ): string {
+    $description = str_replace('{value}', $routingValue, $descriptionTemplate);
+
+    // Create destination via Svix client.
     $destination = $client->createDestination($sourceId, $webhookUrl, $description);
 
     // Set the transformation (filter).
@@ -271,7 +377,6 @@ class SvixWebhookMiddleware {
       ->addValue('signing_secret', $signingSecret)
       ->addValue('payment_processor_id', $paymentProcessorId);
 
-    // Use provided contact ID or fall back to logged-in contact.
     $createdBy = $contactId ?? \CRM_Core_Session::getLoggedInContactID();
     if ($createdBy !== NULL) {
       $createAction->addValue('created_by', $createdBy);
@@ -280,7 +385,6 @@ class SvixWebhookMiddleware {
     $createAction->execute();
 
     \Civi::log()->info('Svix destination registered', [
-      'processor_type' => $processorType,
       'routing_value' => $routingValue,
       'svix_destination_id' => $destination['id'],
       'payment_processor_id' => $paymentProcessorId,

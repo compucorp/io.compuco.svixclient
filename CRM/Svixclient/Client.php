@@ -216,6 +216,84 @@ class CRM_Svixclient_Client {
   }
 
   /**
+   * List all destinations for a source.
+   *
+   * @param string $sourceId
+   *   The Svix source ID.
+   *
+   * @return array
+   *   Array of destination objects.
+   *
+   * @throws CRM_Core_Exception
+   *   If the API call fails.
+   */
+  public function listDestinations(string $sourceId): array {
+    try {
+      $response = $this->request('GET', "/ingest/api/v1/source/{$sourceId}/endpoint");
+
+      \Civi::log()->info('Listed Svix destinations', [
+        'source_id' => $sourceId,
+        'count' => count($response['data'] ?? []),
+      ]);
+
+      return $response['data'] ?? [];
+    }
+    catch (\Exception $e) {
+      \Civi::log()->error('Failed to list Svix destinations', [
+        'source_id' => $sourceId,
+        'error' => $e->getMessage(),
+      ]);
+      throw new CRM_Core_Exception('Failed to list Svix destinations: ' . $e->getMessage());
+    }
+  }
+
+  /**
+   * Disable a destination in Svix.
+   *
+   * @param string $sourceId
+   *   The Svix source ID.
+   * @param string $destinationId
+   *   The Svix destination ID to disable.
+   *
+   * @return bool
+   *   TRUE if successfully disabled, FALSE otherwise.
+   */
+  public function disableDestination(string $sourceId, string $destinationId): bool {
+    try {
+      // First get the current destination to preserve its URL.
+      $destination = $this->getDestination($sourceId, $destinationId);
+      if ($destination === NULL) {
+        \Civi::log()->warning('Cannot disable destination - not found', [
+          'source_id' => $sourceId,
+          'destination_id' => $destinationId,
+        ]);
+        return FALSE;
+      }
+
+      // PUT requires the full object with url.
+      $this->request('PUT', "/ingest/api/v1/source/{$sourceId}/endpoint/{$destinationId}", [
+        'url' => $destination['url'],
+        'disabled' => TRUE,
+      ]);
+
+      \Civi::log()->info('Svix destination disabled', [
+        'source_id' => $sourceId,
+        'destination_id' => $destinationId,
+      ]);
+
+      return TRUE;
+    }
+    catch (\Exception $e) {
+      \Civi::log()->error('Failed to disable Svix destination', [
+        'source_id' => $sourceId,
+        'destination_id' => $destinationId,
+        'error' => $e->getMessage(),
+      ]);
+      return FALSE;
+    }
+  }
+
+  /**
    * Delete a destination from Svix.
    *
    * @param string $sourceId
