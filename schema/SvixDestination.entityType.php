@@ -49,9 +49,15 @@ return [
     ],
     'created_by' => [
       'title' => E::ts('Created By'),
-      'sql_type' => 'varchar(255)',
-      'input_type' => 'Text',
-      'description' => E::ts('User or process that created this destination'),
+      'sql_type' => 'int unsigned',
+      'input_type' => 'EntityRef',
+      'description' => E::ts('Contact who created this destination'),
+      'entity_reference' => [
+        'entity' => 'Contact',
+        'key' => 'id',
+        'on_delete' => 'SET NULL',
+      ],
+      'readonly' => TRUE,
     ],
     'created_date' => [
       'title' => E::ts('Created Date'),
@@ -60,6 +66,14 @@ return [
       'required' => TRUE,
       'default' => 'CURRENT_TIMESTAMP',
       'description' => E::ts('Date and time the destination was created'),
+    ],
+    'signing_secret' => [
+      'title' => E::ts('Signing Secret'),
+      'sql_type' => 'varchar(255)',
+      'input_type' => 'Text',
+      'required' => FALSE,
+      'description' => E::ts('Webhook signing secret for verifying incoming webhooks'),
+      'readonly' => TRUE,
     ],
   ],
   'getIndices' => fn() => [

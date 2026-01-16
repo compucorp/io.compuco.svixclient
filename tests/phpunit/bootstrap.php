@@ -12,6 +12,7 @@ ini_set('safe_mode', 0);
 
 define('CIVICRM_CONTAINER_CACHE', 'never');
 define('CIVICRM_TEST', 1);
+define('CIVICRM_UF', 'UnitTests');
 putenv('CIVICRM_UF=' . ($_ENV['CIVICRM_UF'] = 'UnitTests'));
 
 // phpcs:disable

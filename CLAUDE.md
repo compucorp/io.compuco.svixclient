@@ -4,7 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**io.compuco.svixclient** is a CiviCRM extension providing a Svix webhook client for payment extensions (Stripe, GoCardless). It enables 100+ CiviCRM sites to share a single Svix Ingest platform account, routing webhooks to the correct site using JavaScript filters.
+See [README.md](README.md) for full documentation including:
+- Architecture and design
+- Installation and configuration
+- Usage examples and API reference
+- Adding new payment processors
+- Multi-site support
+
+**Quick Summary:** CiviCRM extension providing Svix webhook client for payment extensions (Stripe, GoCardless). Enables 100+ sites to share a single Svix Ingest account.
 
 ## Build & Development Commands
 
@@ -15,189 +22,122 @@ composer install
 # Run tests
 phpunit9
 
-# Run linter (checks changed files against base branch)
-./bin/vendor/bin/phpcs --standard=phpcs-ruleset.xml <file>
+# Run single test
+phpunit9 --filter testMethodName tests/phpunit/Path/To/Test.php
 
-# Install linter tools
-cd bin && ./install-php-linter
+# Run linter
+./bin/vendor/bin/phpcs --standard=phpcs-ruleset.xml <file>
 
 # Enable extension
 cv ext:enable io.compuco.svixclient
 ```
 
-## Architecture
+## Key Files
 
-### Core Components
-
-1. **CRM_Svixclient_Client** (`CRM/Svixclient/Client.php`)
-   - Main Svix API client
-   - Methods: `createDestination()`, `deleteDestination()`, `getDestination()`, `verifyWebhook()`
-   - API key from `\Civi::settings()->get('svix_api_key')` or `SVIX_API_KEY` env var
-   - Uses Svix SDK for webhook signature verification only
-   - Uses REST API (cURL) for Ingest destination management (no SDK support)
-
-2. **SvixDestination Entity** (`schema/SvixDestination.entityType.php`)
-   - Table: `civicrm_svix_destination`
-   - Stores mapping between Svix destinations and CiviCRM payment processors
-   - FK to payment_processor with CASCADE delete
-
-3. **Filter Builders** (`CRM/Svixclient/FilterBuilder/`)
-   - `FilterBuilderInterface` - contract for filter builders
-   - `AbstractFilterBuilder` - base class with `escapeJsString()` helper (uses `json_encode` for secure JS escaping)
-   - Payment extensions (Stripe, GoCardless) implement their own builders
-
-4. **API4 Endpoints** (`Civi/Api4/`)
-   - `SvixDestination` - DAOEntity for CRUD operations
-   - `Svix::verifyWebhook()` - webhook signature verification
-
-### Multi-Site Design
-
-- **Shared across sites**: API key, source IDs (one per payment provider)
-- **Unique per site**: Destinations, JS filters (based on account/org ID), webhook URLs
+| Component | Location |
+|-----------|----------|
+| Middleware Service | `Civi/Svixclient/Service/SvixWebhookMiddleware.php` |
+| Processor Config | `Civi/Svixclient/Enum/SvixProcessorConfig.php` |
+| Low-Level Client | `CRM/Svixclient/Client.php` |
+| Filter Strategy | `Civi/Svixclient/Filter/` |
+| Entity Schema | `schema/SvixDestination.entityType.php` |
+| Tests | `tests/phpunit/` |
 
 ## CiviCRM Patterns
 
-- **Settings**: Access via `\Civi::settings()->get('svix_api_key')`
-- **Logging**: `\Civi::log()->info()`, `->warning()`, `->error()`
-- **Exceptions**: Use `CRM_Core_Exception`
-- **Class naming**: `CRM_Extension_Class` (PEAR-style PSR-0)
-- **API4 permissions**: Check `CRM_Core_Permission::check()`
+```php
+// Settings
+\Civi::settings()->get('svix_api_key')
 
-## Testing
+// Logging
+\Civi::log()->info('message', ['context' => $value]);
+\Civi::log()->warning('message');
+\Civi::log()->error('message');
 
-- Framework: PHPUnit 9
-- Bootstrap: `tests/phpunit/bootstrap.php`
-- Base class: `BaseHeadlessTest` (headless + transactional)
-- Test locations: `tests/phpunit/CRM/` and `tests/phpunit/Civi/`
+// Exceptions
+throw new CRM_Core_Exception('Error message');
 
-Run a single test:
-```bash
-phpunit9 --filter testMethodName tests/phpunit/Path/To/Test.php
+// API4 (preferred over API3)
+$result = \Civi\Api4\SvixDestination::get(FALSE)  // FALSE = bypass permissions
+  ->addWhere('id', '=', $id)
+  ->execute()
+  ->first();
 ```
-
-## Code Style
-
-- PHP 8.1+ required (`declare(strict_types=1)`)
-- Drupal coding standard with CiviCRM exceptions (see `phpcs-ruleset.xml`)
-- Excluded from linting: `*.civix.php`, `CRM/Svixclient/DAO/*`, `vendor/`, `mixin/`
 
 ---
 
-## Critical Areas (Writing & Reviewing Code)
+## Code Standards
 
-These guidelines apply when **writing new code** and **reviewing existing code**. Always consider these areas proactively.
+- PHP 8.1+ with `declare(strict_types=1)`
+- Drupal coding standard (see `phpcs-ruleset.xml`)
+- Class naming: `CRM_Extension_Class` or `Civi\Extension\Class`
 
-### Security
+**Auto-Generated Files (Do Not Edit):**
+- `svixclient.civix.php`
+- `CRM/Svixclient/DAO/*.php`
+
+---
+
+## Security Guidelines
 
 **Webhook Security:**
-- Never log or expose Svix API keys, webhook secrets, or signing keys
-- Always verify webhook signatures before processing (`Svix::verifyWebhook()`)
-- Validate all webhook payload data before acting on it
-- Check for SQL injection in dynamic queries (use parameterized queries)
-- Sanitize all user input before rendering (XSS prevention)
-- Ensure proper authentication/authorization for API endpoints
+- Never log or expose API keys, webhook secrets, or signing keys
+- Always verify webhook signatures before processing
+- Validate webhook payload data before acting on it
+- Use parameterized queries (prevent SQL injection)
+- Sanitize user input (prevent XSS)
 
-**Sensitive Data Handling:**
-- Svix API keys and webhook secrets are sensitive credentials
-- All Svix API calls should use proper error handling to avoid exposing keys
-- Credentials stored in `civicrm.settings.php` or env vars must never be committed
-- Filter scripts may contain account identifiers - escape properly with `escapeJsString()`
-
-### Performance
-
-- Identify N+1 query issues in destination/processor lookups
-- Avoid unnecessary Svix API calls (use cached destination records)
-- Review database queries in BAO classes for optimization
-- Batch destination operations where possible
-
-### Code Quality
-
-- Services should be focused and follow single responsibility principle
-- Use meaningful names following CiviCRM conventions (`CRM_*` or `Civi\*`)
-- Handle Svix API exceptions properly
-- All service methods should have proper return type declarations
-- Use dependency injection for service dependencies
+**Sensitive Data:**
+- Credentials in `civicrm.settings.php` must never be committed
+- Filter scripts may contain account identifiers - escape properly
 
 ---
 
 ## Commit Message Convention
 
-All commits must start with the branch prefix (issue ID) followed by a short imperative description.
-
 **Format:**
 ```
-COMCL-123: Short description of change
+CIVIMM-123: Short description of change
 ```
 
 **Rules:**
-- Keep summaries under 72 characters
+- Keep under 72 characters
 - Use present tense ("Add", "Fix", "Refactor")
-- Claude must include the correct issue key when committing
-- Be specific and descriptive
-- **DO NOT add any AI attribution or co-authorship lines** (no "Generated with Claude Code", no "Co-Authored-By: Claude")
+- Include the issue key from branch name
+- **NO AI attribution** (no "Co-Authored-By: Claude", no "Generated with...")
 
 **Examples:**
 ```
-COMCL-456: Add null check for destination lookup
-COMCL-789: Fix filter script escaping for special characters
-COMCL-101: Refactor Client class to use dependency injection
+CIVIMM-456: Add null check for destination lookup
+CIVIMM-789: Fix filter script escaping
+CIVIMM-101: Refactor Client to use dependency injection
 ```
 
 ---
 
 ## Handling PR Review Feedback
 
-When receiving PR review comments, **NEVER blindly implement feedback**. Always think critically.
+**NEVER blindly implement feedback.** Always think critically.
 
-**Required Process:**
-1. **Analyze Each Suggestion:** Does it make technical sense? What are the implications?
-2. **Ask Clarifying Questions:** If unsure about reasoning, ask the user
-3. **Explain Your Analysis:** For each change, explain WHY you're making it (or not)
-4. **Get Approval Before Implementing:** Show what you plan to change, wait for confirmation
+**Process:**
+1. Analyze each suggestion - does it make technical sense?
+2. Ask clarifying questions if unsure
+3. Explain your analysis for each change
+4. Get approval before implementing
 
-**Red Flags - Stop and Ask Questions:**
-- Changes that affect database constraints (NOT NULL, foreign keys)
-- Changes to type checking logic (null checks, empty checks)
-- Suggestions that contradict architectural decisions
+**Red Flags - Stop and Ask:**
+- Changes affecting database constraints
+- Changes to type checking logic
+- Suggestions contradicting architectural decisions
 - "Consistency" arguments without technical justification
 
 ---
 
-## CiviCRM API Usage
+## Safety Checklist
 
-**Prefer API4 over API3** for all new code.
-
-```php
-// ✅ PREFERRED: API4 with permission bypass for internal operations
-$destination = \Civi\Api4\SvixDestination::get(FALSE)
-  ->addSelect('id', 'svix_destination_id', 'payment_processor_id')
-  ->addWhere('id', '=', $destinationId)
-  ->execute()
-  ->first();
-
-// ❌ AVOID: API3 (legacy)
-$destination = civicrm_api3('SvixDestination', 'getsingle', [
-  'id' => $destinationId,
-]);
-```
-
-**When to use API4 with `FALSE` (bypass permissions):**
-- IPN/webhook handlers (anonymous context)
-- Internal service operations
-- Background processing jobs
-
----
-
-## Safety & Best Practices
-
-- Never commit code without running **tests** and **linting**
-- Never remove or weaken tests to make them pass
-- Always review Claude's suggestions before execution
-- Always prefix commits with the issue ID (COMCL-###)
-- Never push commits automatically without human review
-- Never commit `civicrm.settings.php` or any file containing API keys
-- Never modify auto-generated files (`svixclient.civix.php`, DAO classes) manually
-
-**Auto-Generated Files (Do Not Edit Manually):**
-- `svixclient.civix.php` (regenerate with civix)
-- `CRM/Svixclient/DAO/*.php` (regenerate from XML schemas)
+- [ ] Run tests before committing
+- [ ] Run linter before committing
+- [ ] Never remove tests to make them pass
+- [ ] Never commit files with API keys
+- [ ] Never push without human review
+- [ ] Always prefix commits with issue ID

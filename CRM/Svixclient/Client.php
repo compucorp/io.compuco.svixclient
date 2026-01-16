@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Civi\Svixclient\Filter\FilterStrategyInterface;
+use Civi\Svixclient\Filter\SimpleFieldFilter;
 use Svix\Webhook;
 
 /**
@@ -19,8 +21,8 @@ class CRM_Svixclient_Client {
    * Base URL for Svix Ingest API.
    *
    * Protected to allow test classes to override for mock servers.
-   */
-  protected string $baseUrl = 'https://api.svix.com';
+   * Loaded from settings or defaults to US server.*/
+  protected string $baseUrl;
 
   /**
    * Svix API key.
@@ -34,7 +36,25 @@ class CRM_Svixclient_Client {
    *   If Svix API key is not configured.
    */
   public function __construct() {
+    $this->baseUrl = $this->loadServerUrl();
     $this->apiKey = $this->loadApiKey();
+  }
+
+  /**
+   * Load the Svix server URL from settings.
+   *
+   * @return string
+   *   The Svix server URL.
+   */
+  private function loadServerUrl(): string {
+    $url = \Civi::settings()->get('svix_server_url');
+
+    if (empty($url)) {
+      // Default to US server if not configured.
+      $url = 'https://api.svix.com';
+    }
+
+    return rtrim($url, '/');
   }
 
   /**
@@ -63,14 +83,15 @@ class CRM_Svixclient_Client {
   /**
    * Create a destination (endpoint) in Svix for receiving webhooks.
    *
+   * Note: Transformations must be set separately via setTransformation().
+   * The Svix Ingest API does not support setting transformation when creating.
+   *
    * @param string $sourceId
    *   The Svix source ID (e.g., src_stripe_xxx).
    * @param string $url
    *   The webhook URL to receive events.
    * @param string $description
    *   A description for this destination.
-   * @param string $filterScript
-   *   JavaScript filter/transformation script.
    *
    * @return array
    *   The created destination data from Svix API.
@@ -82,13 +103,17 @@ class CRM_Svixclient_Client {
     string $sourceId,
     string $url,
     string $description,
-    string $filterScript,
   ): array {
     try {
+      \Civi::log()->info('Creating Svix destination', [
+        'source_id' => $sourceId,
+        'url' => $url,
+        'description' => $description,
+      ]);
+
       $response = $this->request('POST', "/ingest/api/v1/source/{$sourceId}/endpoint", [
         'url' => $url,
         'description' => $description,
-        'transformation' => $filterScript,
       ]);
 
       \Civi::log()->info('Svix destination created', [
@@ -106,6 +131,165 @@ class CRM_Svixclient_Client {
         'error' => $e->getMessage(),
       ]);
       throw new CRM_Core_Exception('Failed to create Svix destination: ' . $e->getMessage());
+    }
+  }
+
+  /**
+   * Set the transformation (JavaScript filter) for a destination.
+   *
+   * Must be called after createDestination() as the Svix Ingest API
+   * requires transformations to be set via a separate PATCH call.
+   *
+   * @param string $sourceId
+   *   The Svix source ID.
+   * @param string $destinationId
+   *   The Svix destination ID.
+   * @param string $code
+   *   The JavaScript transformation code.
+   *
+   * @throws CRM_Core_Exception
+   *   If the API call fails.
+   */
+  public function setTransformation(string $sourceId, string $destinationId, string $code): void {
+    try {
+      \Civi::log()->info('Setting Svix transformation', [
+        'source_id' => $sourceId,
+        'destination_id' => $destinationId,
+        'code_length' => strlen($code),
+      ]);
+
+      $this->request('PATCH', "/ingest/api/v1/source/{$sourceId}/endpoint/{$destinationId}/transformation", [
+        'code' => $code,
+        'enabled' => TRUE,
+      ]);
+
+      \Civi::log()->info('Svix transformation set successfully', [
+        'source_id' => $sourceId,
+        'destination_id' => $destinationId,
+      ]);
+    }
+    catch (\Exception $e) {
+      \Civi::log()->error('Failed to set Svix transformation', [
+        'source_id' => $sourceId,
+        'destination_id' => $destinationId,
+        'error' => $e->getMessage(),
+      ]);
+      throw new CRM_Core_Exception('Failed to set Svix transformation: ' . $e->getMessage());
+    }
+  }
+
+  /**
+   * Get the signing secret for a destination.
+   *
+   * The signing secret is used to verify incoming webhooks.
+   *
+   * @param string $sourceId
+   *   The Svix source ID.
+   * @param string $destinationId
+   *   The Svix destination ID.
+   *
+   * @return string
+   *   The webhook signing secret.
+   *
+   * @throws CRM_Core_Exception
+   *   If the API call fails.
+   */
+  public function getDestinationSecret(string $sourceId, string $destinationId): string {
+    try {
+      $response = $this->request('GET', "/ingest/api/v1/source/{$sourceId}/endpoint/{$destinationId}/secret");
+
+      \Civi::log()->info('Retrieved Svix destination secret', [
+        'source_id' => $sourceId,
+        'destination_id' => $destinationId,
+      ]);
+
+      return $response['key'];
+    }
+    catch (\Exception $e) {
+      \Civi::log()->error('Failed to get Svix destination secret', [
+        'source_id' => $sourceId,
+        'destination_id' => $destinationId,
+        'error' => $e->getMessage(),
+      ]);
+      throw new CRM_Core_Exception('Failed to get Svix destination secret: ' . $e->getMessage());
+    }
+  }
+
+  /**
+   * List all destinations for a source.
+   *
+   * @param string $sourceId
+   *   The Svix source ID.
+   *
+   * @return array
+   *   Array of destination objects.
+   *
+   * @throws CRM_Core_Exception
+   *   If the API call fails.
+   */
+  public function listDestinations(string $sourceId): array {
+    try {
+      $response = $this->request('GET', "/ingest/api/v1/source/{$sourceId}/endpoint");
+
+      \Civi::log()->info('Listed Svix destinations', [
+        'source_id' => $sourceId,
+        'count' => count($response['data'] ?? []),
+      ]);
+
+      return $response['data'] ?? [];
+    }
+    catch (\Exception $e) {
+      \Civi::log()->error('Failed to list Svix destinations', [
+        'source_id' => $sourceId,
+        'error' => $e->getMessage(),
+      ]);
+      throw new CRM_Core_Exception('Failed to list Svix destinations: ' . $e->getMessage());
+    }
+  }
+
+  /**
+   * Disable a destination in Svix.
+   *
+   * @param string $sourceId
+   *   The Svix source ID.
+   * @param string $destinationId
+   *   The Svix destination ID to disable.
+   *
+   * @return bool
+   *   TRUE if successfully disabled, FALSE otherwise.
+   */
+  public function disableDestination(string $sourceId, string $destinationId): bool {
+    try {
+      // First get the current destination to preserve its URL.
+      $destination = $this->getDestination($sourceId, $destinationId);
+      if ($destination === NULL) {
+        \Civi::log()->warning('Cannot disable destination - not found', [
+          'source_id' => $sourceId,
+          'destination_id' => $destinationId,
+        ]);
+        return FALSE;
+      }
+
+      // PUT requires the full object with url.
+      $this->request('PUT', "/ingest/api/v1/source/{$sourceId}/endpoint/{$destinationId}", [
+        'url' => $destination['url'],
+        'disabled' => TRUE,
+      ]);
+
+      \Civi::log()->info('Svix destination disabled', [
+        'source_id' => $sourceId,
+        'destination_id' => $destinationId,
+      ]);
+
+      return TRUE;
+    }
+    catch (\Exception $e) {
+      \Civi::log()->error('Failed to disable Svix destination', [
+        'source_id' => $sourceId,
+        'destination_id' => $destinationId,
+        'error' => $e->getMessage(),
+      ]);
+      return FALSE;
     }
   }
 
@@ -202,6 +386,46 @@ class CRM_Svixclient_Client {
   }
 
   /**
+   * Build a JavaScript filter function for routing webhooks.
+   *
+   * Convenience method that creates a SimpleFieldFilter and builds it.
+   * For more complex filters, use the FilterStrategyInterface directly.
+   *
+   * @param string $field
+   *   The field path in the webhook payload to match against. Can be a
+   *   simple field (e.g., 'account') or nested path ('links.organisation').
+   * @param string $value
+   *   The value to match (e.g., 'acct_xxx' for Stripe, 'OR000123' for
+   *   GoCardless).
+   *
+   * @return string
+   *   The JavaScript filter function.
+   *
+   * @see \Civi\Svixclient\Filter\SimpleFieldFilter
+   * @see \Civi\Svixclient\Filter\FilterStrategyInterface
+   */
+  public static function buildRoutingFilter(string $field, string $value): string {
+    $filter = new SimpleFieldFilter($field, $value);
+    return $filter->build();
+  }
+
+  /**
+   * Build a JavaScript filter from a FilterStrategyInterface implementation.
+   *
+   * Use this method when you need custom filter logic beyond simple field
+   * matching.
+   *
+   * @param \Civi\Svixclient\Filter\FilterStrategyInterface $filter
+   *   The filter strategy to build.
+   *
+   * @return string
+   *   The JavaScript filter function.
+   */
+  public static function buildFilter(FilterStrategyInterface $filter): string {
+    return $filter->build();
+  }
+
+  /**
    * Make an HTTP request to the Svix API.
    *
    * @param string $method
@@ -253,6 +477,13 @@ class CRM_Svixclient_Client {
         }
         break;
 
+      case 'PATCH':
+        $options[CURLOPT_CUSTOMREQUEST] = 'PATCH';
+        if ($data !== NULL) {
+          $options[CURLOPT_POSTFIELDS] = json_encode($data);
+        }
+        break;
+
       case 'GET':
       default:
         // GET is the default.
@@ -275,7 +506,11 @@ class CRM_Svixclient_Client {
       if ($response) {
         $decoded = json_decode($response, TRUE);
         if (isset($decoded['detail'])) {
-          $errorMessage .= ": {$decoded['detail']}";
+          // Handle both string and array error details.
+          $detail = is_array($decoded['detail'])
+            ? json_encode($decoded['detail'])
+            : $decoded['detail'];
+          $errorMessage .= ": {$detail}";
         }
         else {
           $errorMessage .= ": {$response}";

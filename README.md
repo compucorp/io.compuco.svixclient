@@ -78,13 +78,29 @@ This is an [extension for CiviCRM](https://docs.civicrm.org/sysadmin/en/latest/c
 
 ### Settings
 
-Configure the following settings in CiviCRM or via environment variables:
+All Svix configuration is stored in `civicrm.settings.php` (not in the database). Add the following to your settings file:
 
-| Setting | Environment Variable | Description |
-|---------|---------------------|-------------|
-| `svix_api_key` | `SVIX_API_KEY` | Your Svix API key |
-| `svix_stripe_source_id` | - | Svix source ID for Stripe |
-| `svix_gocardless_source_id` | - | Svix source ID for GoCardless |
+```php
+// Svix webhook routing settings
+// Server URL - use EU server for EU accounts (API keys ending in .eu)
+$civicrm_setting['Svix']['svix_server_url'] = 'https://api.eu.svix.com';  // or https://api.svix.com for US
+
+// Svix API key (test or live)
+$civicrm_setting['Svix']['svix_api_key'] = 'sk_your_svix_api_key';
+
+// Source IDs (one per payment provider, shared across all sites)
+$civicrm_setting['Svix']['svix_source_stripe_connect'] = 'src_stripe_xxx';
+$civicrm_setting['Svix']['svix_source_gocardless'] = 'src_gocardless_xxx';
+```
+
+| Setting | Description |
+|---------|-------------|
+| `svix_server_url` | Svix API server URL. Use `https://api.eu.svix.com` for EU accounts, `https://api.svix.com` for US (default) |
+| `svix_api_key` | Your Svix API key. Can also be set via `SVIX_API_KEY` environment variable |
+| `svix_source_stripe_connect` | Svix source ID for Stripe Connect webhooks |
+| `svix_source_gocardless` | Svix source ID for GoCardless webhooks |
+
+**Important:** The signing secret for webhook verification is stored per-destination in the database (fetched automatically from Svix API when creating destinations).
 
 ### One-Time Setup (Platform Admin)
 
@@ -100,178 +116,203 @@ Configure the following settings in CiviCRM or via environment variables:
 
 ## Usage
 
-### Creating a Destination
+### Using the Middleware (Recommended)
+
+The `SvixWebhookMiddleware` service provides a high-level API for payment processors.
+
+#### Registering a Destination
 
 ```php
-// In your payment extension (e.g., Stripe)
-// Use your extension's filter builder (see "Implementing Filter Builders" below)
-$filter = (new CRM_Stripe_Svix_FilterBuilder())
-    ->setAccountId('acct_xxx')
-    ->build();
+// In your payment extension (e.g., Stripe OAuth callback)
+$middleware = \Civi::service('svix.webhook_middleware');
 
-// Create the Svix client
+// Check if Svix is configured
+if (!$middleware->isConfigured()) {
+    throw new \Exception('Svix is not configured');
+}
+
+// Register destination - handles everything automatically
+$destinationId = $middleware->registerDestination(
+    'Stripe Connect',           // Processor type (must match SvixProcessorConfig enum)
+    $paymentProcessorId,        // CiviCRM payment processor ID
+    'acct_xxx',                 // Routing value (Stripe account ID)
+    $contactId                  // Optional: contact who created this (defaults to logged-in user)
+);
+```
+
+#### Deleting a Destination
+
+```php
+$middleware = \Civi::service('svix.webhook_middleware');
+
+// Deletes from both Svix and database
+$middleware->deleteDestination($paymentProcessorId);
+```
+
+#### Verifying Webhooks
+
+```php
+$middleware = \Civi::service('svix.webhook_middleware');
+
+// Check if this is a Svix-forwarded webhook
+if ($middleware->isSvixRequest()) {
+    $result = $middleware->verify($payload, 'Stripe Connect');
+
+    if (!$result['valid']) {
+        throw new \Exception($result['error']);
+    }
+
+    // Process the webhook...
+}
+```
+
+#### Checking Configuration Status
+
+```php
+$middleware = \Civi::service('svix.webhook_middleware');
+
+// Simple check
+if ($middleware->isConfigured()) {
+    // Svix API key is configured
+}
+
+// Detailed status (useful for admin UI)
+$status = $middleware->getConfigurationStatus();
+// Returns: ['configured' => bool, 'message' => string]
+
+// Check if enabled for specific processor
+if ($middleware->isEnabledForProcessorType('Stripe Connect')) {
+    // A Svix destination exists for this processor type
+}
+```
+
+### Using the Low-Level Client
+
+For advanced use cases, you can use the `CRM_Svixclient_Client` directly:
+
+```php
+// Create destination manually
 $client = new CRM_Svixclient_Client();
+$filter = CRM_Svixclient_Client::buildRoutingFilter('account', 'acct_xxx');
 
-// Create destination in Svix
-$sourceId = \Civi::settings()->get('svix_stripe_source_id');
 $destination = $client->createDestination(
     sourceId: $sourceId,
-    url: 'https://mysite.org/civicrm/payment/ipn/stripe',
-    description: 'MySite Stripe Webhooks',
-    filterScript: $filter
+    url: 'https://mysite.org/civicrm/stripe/webhook',
+    description: 'MySite Stripe Webhooks'
 );
 
-// Store in CiviCRM database
-\Civi\Api4\SvixDestination::create()
-    ->addValue('source_id', $sourceId)
-    ->addValue('svix_destination_id', $destination['id'])
-    ->addValue('payment_processor_id', $processorId)
-    ->addValue('created_by', 'stripe_oauth')
-    ->execute();
+$client->setTransformation($sourceId, $destination['id'], $filter);
+$signingSecret = $client->getDestinationSecret($sourceId, $destination['id']);
+
+// Verify webhook directly
+CRM_Svixclient_Client::verifyWebhook($payload, $headers, $secret);
 ```
 
-### Deleting a Destination
+## Building Routing Filters
 
-```php
-$client = new CRM_Svixclient_Client();
+This extension uses the **Strategy Pattern** for building JavaScript filter functions that route webhooks to the correct destination.
 
-// Delete from Svix
-$client->deleteDestination($sourceId, $destinationId);
+### Architecture
 
-// Delete from CiviCRM database
-\Civi\Api4\SvixDestination::delete()
-    ->addWhere('svix_destination_id', '=', $destinationId)
-    ->execute();
+```
+FilterStrategyInterface (contract)
+         ↑
+    implements
+         │
+SimpleFieldFilter (concrete strategy)
+         │
+    used by
+         ↓
+Client::buildFilter() / Client::buildRoutingFilter()
 ```
 
-### Verifying Webhooks
+### Basic Usage (Convenience Method)
+
+For simple field matching, use the static convenience method:
 
 ```php
-// Using the API
-$result = \Civi\Api4\Svix::verifyWebhook()
-    ->setPayload($rawPayload)
-    ->setHeaders([
-        'svix-id' => $headers['svix-id'],
-        'svix-timestamp' => $headers['svix-timestamp'],
-        'svix-signature' => $headers['svix-signature'],
-    ])
-    ->setSecret($webhookSecret)
-    ->execute();
+// Stripe: match by 'account' field
+$filter = CRM_Svixclient_Client::buildRoutingFilter('account', 'acct_xxx');
 
-if ($result->first()['valid']) {
-    // Process the webhook
-}
+// GoCardless: match by 'organisation_id' field
+$filter = CRM_Svixclient_Client::buildRoutingFilter('organisation_id', 'OR000123');
 
-// Or using the Client class directly
-try {
-    CRM_Svixclient_Client::verifyWebhook($payload, $headers, $secret);
-    // Webhook is valid
-} catch (\Exception $e) {
-    // Verification failed
-}
+// Nested field paths are supported
+$filter = CRM_Svixclient_Client::buildRoutingFilter('links.organisation', 'OR000123');
 ```
 
-## Implementing Filter Builders (For Payment Extensions)
+### Strategy Pattern Usage (Extensible)
 
-Payment extensions (Stripe, GoCardless, etc.) should implement their own filter builders
-by extending the abstract base class provided by this extension.
-
-### Interface
-
-Your filter builder must implement `CRM_Svixclient_FilterBuilder_FilterBuilderInterface`:
+For more control or custom filters, use the Strategy Pattern directly:
 
 ```php
-interface CRM_Svixclient_FilterBuilder_FilterBuilderInterface {
-    public function build(): string;
-}
+use Civi\Svixclient\Filter\SimpleFieldFilter;
+
+// Create a filter strategy
+$filter = new SimpleFieldFilter('account', 'acct_xxx');
+
+// Build the JavaScript using the Client
+$js = CRM_Svixclient_Client::buildFilter($filter);
 ```
 
-### Stripe Example
+### Generated JavaScript
 
-Create `CRM/Stripe/Svix/FilterBuilder.php` in your Stripe extension:
+Both methods generate a JavaScript filter function like:
 
-```php
-<?php
-
-class CRM_Stripe_Svix_FilterBuilder extends CRM_Svixclient_FilterBuilder_AbstractFilterBuilder {
-
-  private ?string $accountId = NULL;
-
-  public function setAccountId(string $accountId): self {
-    $this->accountId = $accountId;
-    return $this;
-  }
-
-  public function build(): string {
-    if (empty($this->accountId)) {
-      throw new \InvalidArgumentException('Account ID is required');
-    }
-
-    $escapedAccountId = $this->escapeJsString($this->accountId);
-
-    return <<<JS
+```javascript
 function handler(input) {
-    if (input.account !== '{$escapedAccountId}') return null;
+    if (input.account !== 'acct_xxx') return null;
     return { payload: input };
 }
-JS;
-  }
-
-}
 ```
 
-Usage in Stripe extension:
+### Custom Filter Strategies
+
+For complex filtering logic, implement `FilterStrategyInterface`:
 
 ```php
-$filter = (new CRM_Stripe_Svix_FilterBuilder())
-    ->setAccountId($stripeAccountId)
-    ->build();
-```
+use Civi\Svixclient\Filter\FilterStrategyInterface;
 
-### GoCardless Example
+class GoCardlessEventsFilter implements FilterStrategyInterface {
 
-Create `CRM/Gocardless/Svix/FilterBuilder.php` in your GoCardless extension:
+    private string $organisationId;
 
-```php
-<?php
-
-class CRM_Gocardless_Svix_FilterBuilder extends CRM_Svixclient_FilterBuilder_AbstractFilterBuilder {
-
-  private ?string $organisationId = NULL;
-
-  public function setOrganisationId(string $organisationId): self {
-    $this->organisationId = $organisationId;
-    return $this;
-  }
-
-  public function build(): string {
-    if (empty($this->organisationId)) {
-      throw new \InvalidArgumentException('Organisation ID is required');
+    public function __construct(string $organisationId) {
+        $this->organisationId = $organisationId;
     }
 
-    $escapedOrgId = $this->escapeJsString($this->organisationId);
+    public function build(): string {
+        $escaped = json_encode($this->organisationId);
+        $escaped = substr($escaped, 1, -1); // Remove quotes
 
-    return <<<JS
+        return <<<JS
 function handler(input) {
     const isForThisOrg = input.events?.some(
-        event => event.links?.organisation === '{$escapedOrgId}'
+        event => event.links?.organisation === '{$escaped}'
     );
     if (!isForThisOrg) return null;
     return { payload: input };
 }
 JS;
-  }
-
+    }
 }
+
+// Usage
+$filter = new GoCardlessEventsFilter('OR000123');
+$js = CRM_Svixclient_Client::buildFilter($filter);
+$client->setTransformation($sourceId, $destinationId, $js);
 ```
 
-Usage in GoCardless extension:
+### Why Strategy Pattern?
 
-```php
-$filter = (new CRM_Gocardless_Svix_FilterBuilder())
-    ->setOrganisationId($gcOrganisationId)
-    ->build();
-```
+This design follows SOLID principles and prevents autoloading issues:
+
+| Benefit | Description |
+|---------|-------------|
+| **Open/Closed** | Add new filter types without modifying Client |
+| **No Inheritance Issues** | Payment extensions use composition, not inheritance |
+| **Testable** | Each filter strategy can be unit tested independently |
+| **Extensible** | Custom filters for complex webhook structures |
 
 ### Filter Script Requirements
 
@@ -284,14 +325,13 @@ The JavaScript filter function must:
 
 ### Security: String Escaping
 
-Always use `$this->escapeJsString()` when embedding values in JavaScript filter scripts. This method uses `json_encode()` internally to properly escape:
+The `buildRoutingFilter()` method automatically escapes values using `json_encode()` to prevent
+JavaScript injection. This handles:
 
 - Single quotes (`'` → `\'`)
 - Backslashes (`\` → `\\`)
-- Newlines, tabs, and other control characters (`\n`, `\r`, `\t`)
+- Newlines, tabs, and other control characters
 - Unicode characters
-
-This prevents JavaScript injection attacks if account IDs contain malicious characters.
 
 ## API Reference
 
@@ -304,9 +344,10 @@ This prevents JavaScript injection attacks if account IDs contain malicious char
 | id | int | Primary key |
 | source_id | string | Svix source ID |
 | svix_destination_id | string | Svix destination ID |
-| payment_processor_id | int | FK to payment processor |
-| created_by | string | Creator identifier |
+| payment_processor_id | int | FK to payment processor (CASCADE delete) |
+| created_by | int | FK to Contact who created this destination |
 | created_date | timestamp | Creation timestamp |
+| signing_secret | string | Webhook signing secret for verification |
 
 ### API Actions
 
@@ -337,6 +378,30 @@ This SearchKit-based view displays:
 - Created by and creation date
 
 Requires "administer CiviCRM" permission.
+
+## Adding New Payment Processors
+
+To add support for a new payment processor:
+
+1. **Add case to SvixProcessorConfig enum** (`Civi/Svixclient/Enum/SvixProcessorConfig.php`):
+   ```php
+   case NewProcessor = 'New Processor';
+   ```
+
+2. **Add match arms** for the new processor:
+   - `getRoutingField()` - JSON path to match (e.g., 'account_id')
+   - `getSourceIdSetting()` - Setting name (e.g., 'svix_source_new_processor')
+   - `getDescriptionTemplate()` - Template with `{value}` placeholder
+
+3. **Add webhook path** in `SvixWebhookMiddleware::getWebhookUrlForProcessor()`:
+   ```php
+   'New Processor' => 'civicrm/newprocessor/webhook',
+   ```
+
+4. **Configure the source ID** in `civicrm.settings.php`:
+   ```php
+   $civicrm_setting['Svix']['svix_source_new_processor'] = 'src_xxx';
+   ```
 
 ## Multi-Site Support
 
