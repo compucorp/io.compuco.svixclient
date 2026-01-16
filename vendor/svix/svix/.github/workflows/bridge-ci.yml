@@ -1,0 +1,107 @@
+name: Bridge CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'bridge/**'
+      - 'rust/**'
+      - '.github/workflows/bridge-ci.yml'
+  pull_request:
+    paths:
+      - 'bridge/**'
+      - '.github/workflows/bridge-ci.yml'
+      - 'rust/**'
+      - 'lib-openapi.json'
+
+# When pushing to a PR, cancel any jobs still running for the previous head commit of the PR
+concurrency:
+  # head_ref is only defined for pull requests, run_id is always unique and defined so if this
+  # workflow was not triggered by a pull request, nothing gets cancelled.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  check-fmt:
+    name: Check formatting
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
+      - name: rustfmt
+        run: cargo fmt -- --check
+        working-directory: bridge
+
+  check-unused-deps:
+    name: Check for unused dependencies
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: taiki-e/install-action@cargo-machete
+
+      - run: cargo machete
+        working-directory: bridge
+
+  test-versions:
+    name: Webhook Bridge CI
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        rust: ["1.85.0", stable, beta]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "bridge -> target"
+          # only save the cache on the main branch
+          # cf https://github.com/Swatinem/rust-cache/issues/95
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # include relevant information in the cache name
+          prefix-key: "bridge-${{ matrix.rust }}"
+
+      - uses: taiki-e/install-action@nextest
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+        working-directory: bridge
+
+      - name: Install system dependencies
+        # Packages should align with whatever is in the bridge/Dockerfile
+        run: |
+          sudo apt-get install -y \
+            build-essential=12.* \
+            checkinstall=1.* \
+            curl \
+            libssl-dev=* \
+            pkg-config=1.8.* \
+            zlib1g-dev=1:*
+
+      - name: Start required services
+        run: docker compose -f "bridge/testing-docker-compose.yml" up -d
+
+      - name: Run tests
+        working-directory: bridge
+        run: ./run-tests.sh
+
+      - name: Stop required services
+        run: docker compose -f "bridge/testing-docker-compose.yml" down
+
+      - name: Idle Test
+        working-directory: bridge
+        run: ./run-idle-test.sh
