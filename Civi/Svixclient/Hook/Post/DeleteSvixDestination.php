@@ -14,16 +14,6 @@ namespace Civi\Svixclient\Hook\Post;
 class DeleteSvixDestination {
 
   /**
-   * The operation being performed.
-   */
-  private string $op;
-
-  /**
-   * The entity name.
-   */
-  private string $objectName;
-
-  /**
    * The entity ID.
    */
   private ?int $id;
@@ -38,18 +28,12 @@ class DeleteSvixDestination {
   /**
    * Constructor.
    *
-   * @param string $op
-   *   The operation being performed (create, edit, delete, etc.).
-   * @param string $objectName
-   *   The name of the entity being operated on.
    * @param int|null $id
    *   The ID of the entity.
    * @param object|null $objectRef
    *   The DAO object containing the record data.
    */
-  public function __construct(string $op, string $objectName, ?int $id, ?object $objectRef) {
-    $this->op = $op;
-    $this->objectName = $objectName;
+  public function __construct(?int $id, ?object $objectRef) {
     $this->id = $id;
     $this->objectRef = $objectRef;
   }
@@ -77,9 +61,7 @@ class DeleteSvixDestination {
    *   TRUE if this hook should process the event.
    */
   private function shouldRun(): bool {
-    return $this->op === 'delete'
-      && $this->objectName === 'SvixDestination'
-      && !empty($this->id);
+    return !empty($this->id);
   }
 
   /**

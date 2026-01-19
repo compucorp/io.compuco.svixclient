@@ -27,37 +27,11 @@ class DeleteSvixDestinationTest extends TestCase implements HeadlessInterface, T
   }
 
   /**
-   * Test that hook does not run for non-delete operations.
-   */
-  public function testDoesNotRunForNonDeleteOperation(): void {
-    $objectRef = $this->createMockObjectRef('src_test', 'ep_test');
-    $hook = new DeleteSvixDestination('create', 'SvixDestination', 1, $objectRef);
-
-    // Should not throw any exceptions or call Svix API.
-    $hook->run();
-
-    $this->assertTrue(TRUE);
-  }
-
-  /**
-   * Test that hook does not run for non-SvixDestination entities.
-   */
-  public function testDoesNotRunForOtherEntities(): void {
-    $objectRef = new \stdClass();
-    $hook = new DeleteSvixDestination('delete', 'Contact', 1, $objectRef);
-
-    // Should not throw any exceptions or call Svix API.
-    $hook->run();
-
-    $this->assertTrue(TRUE);
-  }
-
-  /**
    * Test that hook does not run when ID is null.
    */
   public function testDoesNotRunForNullId(): void {
     $objectRef = $this->createMockObjectRef('src_test', 'ep_test');
-    $hook = new DeleteSvixDestination('delete', 'SvixDestination', NULL, $objectRef);
+    $hook = new DeleteSvixDestination(NULL, $objectRef);
 
     // Should not throw any exceptions or call Svix API.
     $hook->run();
@@ -69,7 +43,7 @@ class DeleteSvixDestinationTest extends TestCase implements HeadlessInterface, T
    * Test that hook handles empty objectRef gracefully.
    */
   public function testHandlesEmptyObjectRef(): void {
-    $hook = new DeleteSvixDestination('delete', 'SvixDestination', 1, NULL);
+    $hook = new DeleteSvixDestination(1, NULL);
 
     // Should not throw any exceptions.
     $hook->run();
@@ -84,7 +58,7 @@ class DeleteSvixDestinationTest extends TestCase implements HeadlessInterface, T
     $objectRef = new \stdClass();
     $objectRef->svix_destination_id = 'ep_test';
     // source_id is missing.
-    $hook = new DeleteSvixDestination('delete', 'SvixDestination', 1, $objectRef);
+    $hook = new DeleteSvixDestination(1, $objectRef);
 
     // Should not throw any exceptions.
     $hook->run();
@@ -99,7 +73,7 @@ class DeleteSvixDestinationTest extends TestCase implements HeadlessInterface, T
     $objectRef = new \stdClass();
     $objectRef->source_id = 'src_test';
     // svix_destination_id is missing.
-    $hook = new DeleteSvixDestination('delete', 'SvixDestination', 1, $objectRef);
+    $hook = new DeleteSvixDestination(1, $objectRef);
 
     // Should not throw any exceptions.
     $hook->run();
@@ -119,7 +93,7 @@ class DeleteSvixDestinationTest extends TestCase implements HeadlessInterface, T
     $objectRef = $this->createMockObjectRef($sourceId, $svixDestinationId);
 
     // Create a mock hook that tracks if deleteFromSvix was called.
-    $mockHook = $this->createMockHook('delete', 'SvixDestination', 1, $objectRef);
+    $mockHook = $this->createMockHook(1, $objectRef);
 
     // Run the hook.
     $mockHook->run();
@@ -153,7 +127,7 @@ class DeleteSvixDestinationTest extends TestCase implements HeadlessInterface, T
     $objectRef = $this->createMockObjectRef('src_test', 'ep_test');
 
     // Create a mock hook that throws an exception.
-    $mockHook = new class('delete', 'SvixDestination', 1, $objectRef) extends DeleteSvixDestination {
+    $mockHook = new class(1, $objectRef) extends DeleteSvixDestination {
 
       /**
        * {@inheritdoc}
@@ -208,10 +182,6 @@ class DeleteSvixDestinationTest extends TestCase implements HeadlessInterface, T
   /**
    * Create a mock hook that tracks delete calls.
    *
-   * @param string $op
-   *   The operation.
-   * @param string $objectName
-   *   The object name.
    * @param int|null $id
    *   The ID.
    * @param object|null $objectRef
@@ -220,8 +190,8 @@ class DeleteSvixDestinationTest extends TestCase implements HeadlessInterface, T
    * @return object
    *   A mock hook instance.
    */
-  private function createMockHook(string $op, string $objectName, ?int $id, $objectRef): object {
-    return new class($op, $objectName, $id, $objectRef) extends DeleteSvixDestination {
+  private function createMockHook(?int $id, $objectRef): object {
+    return new class($id, $objectRef) extends DeleteSvixDestination {
 
       /**
        * Whether delete was called.
