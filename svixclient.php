@@ -57,11 +57,8 @@ function svixclient_civicrm_enable(): void {
  * @link https://docs.civicrm.org/dev/en/latest/hooks/hook_civicrm_post
  */
 function svixclient_civicrm_post(string $op, string $objectName, ?int $id, &$objectRef): void {
-  $hooks = [
-    new \Civi\Svixclient\Hook\Post\DeleteSvixDestination($op, $objectName, $id, $objectRef),
-  ];
-
-  foreach ($hooks as $hook) {
+  if ($op === 'delete' && $objectName === 'SvixDestination') {
+    $hook = new \Civi\Svixclient\Hook\Post\DeleteSvixDestination($id, $objectRef);
     $hook->run();
   }
 }
