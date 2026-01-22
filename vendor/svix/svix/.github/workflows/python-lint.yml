@@ -1,0 +1,36 @@
+name: Python Lint
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "python/**"
+      - "codegen/lib-openapi.json"
+      - ".github/workflows/python-lint.yml"
+  pull_request:
+    paths:
+      - "python/**"
+      - "codegen/lib-openapi.json"
+      - ".github/workflows/python-lint.yml"
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        name: Install Python
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          cd python
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt .
+          python -m pip install -r requirements-dev.txt .
+
+      - name: Run linting
+        run: |
+          cd python
+          sh ./scripts/lint.sh

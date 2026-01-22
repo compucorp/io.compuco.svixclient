@@ -1,0 +1,41 @@
+name: JavaScript Lint
+
+on:
+  pull_request:
+    paths:
+      - "javascript/**"
+      - "codegen/lib-openapi.json"
+      - '.github/workflows/javascript-lint.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - "javascript/**"
+      - "codegen/lib-openapi.json"
+      - '.github/workflows/javascript-lint.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'latest'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install modules
+        run: |
+          cd javascript
+          npm install
+
+      - name: Lint
+        run: |
+          cd javascript
+          npm run check
+
+      - name: Test
+        run: |
+          cd javascript
+          npm run test
