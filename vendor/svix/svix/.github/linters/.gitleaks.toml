@@ -1,5 +1,0 @@
-[allowlist]
-description = "global allow list"
-regexes = [
-  '''eyJhcHBJZCI6ICJhcHBfMXRSdFl''',
-]
