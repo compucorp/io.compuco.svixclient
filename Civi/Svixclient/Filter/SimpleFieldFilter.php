@@ -23,9 +23,11 @@ namespace Civi\Svixclient\Filter;
  * ## Generated JavaScript
  *
  * ```javascript
- * function handler(input) {
- *     if (input.account !== 'acct_xxx') return null;
- *     return { payload: input };
+ * function handler(webhook) {
+ *     if (webhook.payload.account !== 'acct_xxx') {
+ *         webhook.cancel = true;
+ *     }
+ *     return webhook;
  * }
  * ```
  *
@@ -70,9 +72,11 @@ class SimpleFieldFilter implements FilterStrategyInterface {
     $escapedValue = $this->escapeJsString($this->value);
 
     return <<<JS
-function handler(input) {
-    if (input.{$this->field} !== '{$escapedValue}') return null;
-    return { payload: input };
+function handler(webhook) {
+    if (webhook.payload.{$this->field} !== '{$escapedValue}') {
+        webhook.cancel = true;
+    }
+    return webhook;
 }
 JS;
   }

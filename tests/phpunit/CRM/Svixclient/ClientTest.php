@@ -153,10 +153,10 @@ class CRM_Svixclient_ClientTest extends BaseHeadlessTest {
     $filter = CRM_Svixclient_Client::buildRoutingFilter('account', 'acct_1234567890');
 
     // Verify the filter is a valid JavaScript function.
-    $this->assertStringContainsString('function handler(input)', $filter);
-    $this->assertStringContainsString("input.account !== 'acct_1234567890'", $filter);
-    $this->assertStringContainsString('return null', $filter);
-    $this->assertStringContainsString('return { payload: input }', $filter);
+    $this->assertStringContainsString('function handler(webhook)', $filter);
+    $this->assertStringContainsString("webhook.payload.account !== 'acct_1234567890'", $filter);
+    $this->assertStringContainsString('webhook.cancel = true', $filter);
+    $this->assertStringContainsString('return webhook', $filter);
   }
 
   /**
@@ -165,8 +165,8 @@ class CRM_Svixclient_ClientTest extends BaseHeadlessTest {
   public function testBuildRoutingFilterForGoCardless(): void {
     $filter = CRM_Svixclient_Client::buildRoutingFilter('organisation_id', 'OR000123');
 
-    $this->assertStringContainsString('function handler(input)', $filter);
-    $this->assertStringContainsString("input.organisation_id !== 'OR000123'", $filter);
+    $this->assertStringContainsString('function handler(webhook)', $filter);
+    $this->assertStringContainsString("webhook.payload.organisation_id !== 'OR000123'", $filter);
   }
 
   /**
@@ -175,8 +175,8 @@ class CRM_Svixclient_ClientTest extends BaseHeadlessTest {
   public function testBuildRoutingFilterWithNestedField(): void {
     $filter = CRM_Svixclient_Client::buildRoutingFilter('links.organisation', 'OR000123');
 
-    $this->assertStringContainsString('function handler(input)', $filter);
-    $this->assertStringContainsString("input.links.organisation !== 'OR000123'", $filter);
+    $this->assertStringContainsString('function handler(webhook)', $filter);
+    $this->assertStringContainsString("webhook.payload.links.organisation !== 'OR000123'", $filter);
   }
 
   /**
@@ -187,7 +187,7 @@ class CRM_Svixclient_ClientTest extends BaseHeadlessTest {
     $filter = CRM_Svixclient_Client::buildRoutingFilter('account', "acct_with'quote");
 
     // The quote should be escaped.
-    $this->assertStringContainsString('function handler(input)', $filter);
+    $this->assertStringContainsString('function handler(webhook)', $filter);
     // The raw unescaped string should not appear.
     $this->assertStringNotContainsString("'acct_with'quote'", $filter);
   }
@@ -200,8 +200,8 @@ class CRM_Svixclient_ClientTest extends BaseHeadlessTest {
 
     $js = CRM_Svixclient_Client::buildFilter($filterStrategy);
 
-    $this->assertStringContainsString('function handler(input)', $js);
-    $this->assertStringContainsString("input.account !== 'acct_test'", $js);
+    $this->assertStringContainsString('function handler(webhook)', $js);
+    $this->assertStringContainsString("webhook.payload.account !== 'acct_test'", $js);
   }
 
   /**
