@@ -16,7 +16,7 @@ class DeleteSvixDestination {
   /**
    * The entity ID.
    */
-  private ?int $id;
+  private int|string|null $id;
 
   /**
    * The DAO object containing the deleted record's data.
@@ -28,12 +28,12 @@ class DeleteSvixDestination {
   /**
    * Constructor.
    *
-   * @param int|null $id
+   * @param int|string|null $id
    *   The ID of the entity.
    * @param object|null $objectRef
    *   The DAO object containing the record data.
    */
-  public function __construct(?int $id, ?object $objectRef) {
+  public function __construct(int|string|null $id, ?object $objectRef) {
     $this->id = $id;
     $this->objectRef = $objectRef;
   }
