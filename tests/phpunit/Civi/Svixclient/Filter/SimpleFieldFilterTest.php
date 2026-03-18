@@ -29,10 +29,10 @@ class SimpleFieldFilterTest extends TestCase {
     $filter = new SimpleFieldFilter('account', 'acct_1234567890');
     $js = $filter->build();
 
-    $this->assertStringContainsString('function handler(input)', $js);
-    $this->assertStringContainsString("input.account !== 'acct_1234567890'", $js);
-    $this->assertStringContainsString('return null', $js);
-    $this->assertStringContainsString('return { payload: input }', $js);
+    $this->assertStringContainsString('function handler(webhook)', $js);
+    $this->assertStringContainsString("webhook.payload.account !== 'acct_1234567890'", $js);
+    $this->assertStringContainsString('webhook.cancel = true', $js);
+    $this->assertStringContainsString('return webhook', $js);
   }
 
   /**
@@ -42,8 +42,10 @@ class SimpleFieldFilterTest extends TestCase {
     $filter = new SimpleFieldFilter('organisation_id', 'OR000123');
     $js = $filter->build();
 
-    $this->assertStringContainsString('function handler(input)', $js);
-    $this->assertStringContainsString("input.organisation_id !== 'OR000123'", $js);
+    $this->assertStringContainsString('function handler(webhook)', $js);
+    $this->assertStringContainsString("webhook.payload.organisation_id !== 'OR000123'", $js);
+    $this->assertStringContainsString('webhook.cancel = true', $js);
+    $this->assertStringContainsString('return webhook', $js);
   }
 
   /**
@@ -53,7 +55,10 @@ class SimpleFieldFilterTest extends TestCase {
     $filter = new SimpleFieldFilter('links.organisation', 'OR000123');
     $js = $filter->build();
 
-    $this->assertStringContainsString("input.links.organisation !== 'OR000123'", $js);
+    $this->assertStringContainsString('function handler(webhook)', $js);
+    $this->assertStringContainsString("webhook.payload.links.organisation !== 'OR000123'", $js);
+    $this->assertStringContainsString('webhook.cancel = true', $js);
+    $this->assertStringContainsString('return webhook', $js);
   }
 
   /**
@@ -99,13 +104,14 @@ class SimpleFieldFilterTest extends TestCase {
     $js = $filter->build();
 
     // Should start with function declaration.
-    $this->assertStringStartsWith('function handler(input)', $js);
+    $this->assertStringStartsWith('function handler(webhook)', $js);
 
-    // Should contain the conditional check.
-    $this->assertMatchesRegularExpression('/if\s*\(input\.account\s*!==/', $js);
+    // Should contain the conditional check on webhook.payload.
+    $this->assertMatchesRegularExpression('/if\s*\(webhook\.payload\.account\s*!==/', $js);
 
-    // Should end with return statement.
-    $this->assertStringContainsString('return { payload: input }', $js);
+    // Should contain cancel mechanism and return.
+    $this->assertStringContainsString('webhook.cancel = true', $js);
+    $this->assertStringContainsString('return webhook', $js);
   }
 
 }
