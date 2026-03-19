@@ -1,0 +1,43 @@
+name: Ruby Lint
+
+on:
+  pull_request:
+    paths:
+      - "ruby/**"
+      - "codegen/lib-openapi.json"
+      - '.github/workflows/ruby-lint.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - "ruby/**"
+      - "codegen/lib-openapi.json"
+      - '.github/workflows/ruby-lint.yml'
+
+jobs:
+  dotnet:
+    name: Ruby Lint
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: 3.4.2
+
+      - name: Install dependencies
+        run: |
+          cd ruby
+          bundler install
+
+      - name: Build
+        run: |
+          cd ruby
+          bundler exec rake build
+
+      - name: Test
+        run: |
+          cd ruby
+          bundler exec rspec spec

@@ -1,0 +1,48 @@
+name: C# Lint
+
+on:
+  pull_request:
+    paths:
+      - "csharp/**"
+      - "codegen/lib-openapi.json"
+      - '.github/workflows/csharp-lint.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - "csharp/**"
+      - "codegen/lib-openapi.json"
+      - '.github/workflows/csharp-lint.yml'
+
+jobs:
+  dotnet:
+    name: C# Lint
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup .NET Core SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install dependencies
+        run: |
+          cd csharp
+          dotnet restore
+          dotnet tool install csharpier -g --version 1.0.1
+
+      - name: Check formatting
+        run: |
+          cd csharp
+          csharpier check Svix.Tests
+          csharpier check Svix
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+        working-directory: ./csharp
+
+      - name: Test
+        run: dotnet test Svix.Tests
+        working-directory: ./csharp

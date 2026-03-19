@@ -1,0 +1,34 @@
+name: Kotlin Lint
+
+on:
+  pull_request:
+    paths:
+      - "kotlin/**"
+      - "codegen/lib-openapi.json"
+      - '.github/workflows/kotlin-lint.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - "javascript/**"
+      - "codegen/lib-openapi.json"
+      - '.github/workflows/javascript-lint.yml'
+
+jobs:
+  kotlin:
+    name: Kotlin Lint
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+
+      - name: Build
+        run: |
+          cd kotlin
+          ./gradlew build

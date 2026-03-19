@@ -1,0 +1,24 @@
+name: PHP Release
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Mega Releaser
+    types:
+      - completed
+
+jobs:
+  packagist:
+    name: Update Packagist
+    runs-on: ubuntu-24.04
+    environment: release
+
+    steps:
+      - name: Update Packagist
+        run: |
+          curl -X POST "https://packagist.org/api/update-package?username=svix&apiToken=$PACKAGIST_API_KEY" \
+            -H 'content-type: application/json' \
+            -d '{"repository":{"url":"https://packagist.org/packages/svix/svix"}}'
+        env:
+          PACKAGIST_API_KEY: ${{ secrets.PACKAGIST_API_KEY }}
