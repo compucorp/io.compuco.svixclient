@@ -1,2 +1,0 @@
-# Ignore mustache files for the purposes of language statitics
-*.mustache linguist-vendored
