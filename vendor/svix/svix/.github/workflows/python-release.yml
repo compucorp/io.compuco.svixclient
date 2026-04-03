@@ -1,0 +1,45 @@
+name: Python Release
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Mega Releaser
+    types:
+      - completed
+
+jobs:
+  build:
+    permissions:
+      id-token: write
+    name: Build distributions
+    runs-on: ubuntu-24.04
+    environment: release
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        name: Install Python
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          cd python
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Install build
+        run: |
+          cd python
+          python -m pip install build
+
+      - name: Build distributions
+        run: |
+          cd python
+          python -m build
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages_dir: python/dist

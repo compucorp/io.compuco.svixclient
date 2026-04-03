@@ -1,0 +1,45 @@
+name: Ruby Release
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Mega Releaser
+    types:
+      - completed
+
+jobs:
+  dotnet:
+    name: Ruby Release
+    runs-on: ubuntu-24.04
+    environment: release
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: 3.4.2
+
+      - name: Install dependencies
+        run: |
+          cd ruby
+          bundler install
+
+      - name: Build
+        run: |
+          cd ruby
+          bundler exec rake build
+
+      - name: Publish
+        run: |
+          mkdir -p "$HOME/.gem"
+          touch "$HOME/.gem/credentials"
+          chmod 0600 "$HOME/.gem/credentials"
+          printf -- "---\n:rubygems_api_key: %s\n" "$RUBYGEMS_AUTH_TOKEN" > "$HOME/.gem/credentials"
+
+          cd ruby
+          gem push pkg/*.gem
+        env:
+          RUBYGEMS_AUTH_TOKEN: "${{secrets.RUBYGEMS_AUTH_TOKEN}}"

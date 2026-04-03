@@ -1,0 +1,26 @@
+name: Update Postman Collection
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Mega Releaser
+    types:
+      - completed
+
+jobs:
+  postman:
+    name: Update Postman Collection
+    runs-on: ubuntu-24.04
+    environment: release
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Dependencies
+        run: yarn
+
+      - name: Update Postman Collection
+        run: yarn update-postman
+        env:
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
