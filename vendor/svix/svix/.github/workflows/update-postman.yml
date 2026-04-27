@@ -1,0 +1,19 @@
+name: Update Postman Collection
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  postman:
+    name: Update Postman Collection
+    runs-on: ubuntu-24.04
+    environment: release
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Update Postman Collection
+        run: npm install openapi-to-postmanv2 && node tools/update_postman.js
+        env:
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}

@@ -1,0 +1,29 @@
+name: Codegen
+
+on:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-git-consistency:
+    name: Check for uncommitted changes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Regen openapi libs
+        run: ./regen_openapi.py
+
+      - name: Check for uncommitted changes
+        run: |
+          gs=$(git status -s)
+          if [[ -n "$gs" ]]; then
+            echo 'there are uncommitted changes!'
+            echo 'please rerun `regen_openapi.py` and commit the result'
+            git status
+            exit 1
+          else
+            echo 'all good.'
+          fi

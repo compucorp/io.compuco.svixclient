@@ -1,0 +1,7 @@
+// this file is @generated
+{% for name, type in api.types | items -%}
+export {
+    {% if type.kind == "struct" or type.kind == "struct_enum" %}type {% endif -%}
+    {{- name | to_upper_camel_case -}}
+} from "./{{ name | to_lower_camel_case }}";
+{% endfor %}

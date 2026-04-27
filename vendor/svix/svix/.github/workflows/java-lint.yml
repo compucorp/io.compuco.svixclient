@@ -1,0 +1,22 @@
+name: Java Lint
+on:
+  workflow_call:
+
+jobs:
+  dotnet:
+    name: Java Lint
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+
+      - name: Build
+        run: |
+          cd java
+          ./gradlew build
