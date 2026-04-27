@@ -1,0 +1,13 @@
+name: pre-commit
+
+on:
+  workflow_call:
+
+jobs:
+  typos:
+    name: Validate pre-commit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+      - uses: pre-commit/action@v3.0.1

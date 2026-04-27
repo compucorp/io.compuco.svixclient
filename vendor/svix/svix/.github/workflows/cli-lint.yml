@@ -1,0 +1,59 @@
+name: CLI Lint
+
+on:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-fmt:
+    name: Check formatting
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
+      - name: rustfmt
+        run: cargo fmt -- --check
+        working-directory: svix-cli
+
+  test-versions:
+    name: CLI Lint
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        # keep this in sync with svix-cli/Cargo.toml MSRV
+        rust: ["1.88.0", stable, beta]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Regen openapi libs
+        run: ./regen_openapi.py
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "svix-cli -> target"
+          # only save the cache on the main branch
+          # cf https://github.com/Swatinem/rust-cache/issues/95
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # include relevant information in the cache name
+          prefix-key: "cli-${{ matrix.rust }}"
+
+      - uses: taiki-e/install-action@nextest
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+        working-directory: svix-cli
+
+      - name: Run tests
+        run: cargo nextest run
+        working-directory: svix-cli

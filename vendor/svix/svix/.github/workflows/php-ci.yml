@@ -1,0 +1,25 @@
+name: PHP CI
+
+on:
+  workflow_call:
+jobs:
+  build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        php-versions: ['8.3', '8.4', '8.5']
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install php
+        uses: shivammathur/setup-php@ec406be512d7077f68eed36e63f4d91bc006edc4 # 2.35.4
+        with:
+          php-version: ${{ matrix.php-versions }}
+          tools: composer
+
+      - name: Install deps
+        run: composer install
+
+      - name: Run unit tests
+        run: vendor/bin/phpunit --configuration phpunit.xml

@@ -1,0 +1,121 @@
+name: Server Release
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+
+jobs:
+  release:
+    name: release x86_64-unknown-linux-gnu
+    runs-on: ubuntu-24.04
+    environment: release
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Compile server
+        run: cargo build --release --manifest-path server/svix-server/Cargo.toml
+
+      - name: Release
+        uses: actions/upload-artifact@v4
+        with:
+          name: svix-server-x86_64-unknown-linux-gnu
+          path: server/target/release/svix-server
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  get-version:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          filter: tree:0
+      - id: get-version-number
+        run: |
+          echo "tag=$(git describe --tags --abbrev=0)" >> "$GITHUB_OUTPUT"
+    outputs:
+      version: ${{ steps.get-version-number.outputs.tag }}
+
+  build:
+    needs: [get-version]
+    uses: docker/github-builder/.github/workflows/build.yml@v1
+    permissions:
+      contents: read # to fetch the repository content
+      id-token: write # for signing attestation(s) with GitHub OIDC Token
+      packages: write # to push to ghcr
+    with:
+      output: image
+      context: server
+      push: true
+      platforms: linux/amd64,linux/arm64
+      cache: true
+      cache-scope: svix-server-release
+      cache-mode: max
+      meta-images: ghcr.io/svix/svix-server-staging
+      meta-flavor: |
+        latest=true
+      meta-tags: |
+        type=semver,pattern={{version}},prefix=v,value=${{needs.get-version.outputs.version}}
+        type=semver,pattern={{major}}.{{minor}},prefix=v,value=${{needs.get-version.outputs.version}}
+        type=semver,pattern={{major}},prefix=v,value=${{needs.get-version.outputs.version}}
+    secrets:
+      registry-auths: |
+        - registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+  release-to-dockerhub:
+    environment: release
+    needs: [get-version, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install regctl
+        uses: iarekylew00t/regctl-installer@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Recompute meta tags
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/svix/svix-server-staging
+          sep-tags: " "
+          flavor: |
+            latest=true
+          tags: |
+            type=semver,pattern={{version}},prefix=v,value=${{needs.get-version.outputs.version}}
+            type=semver,pattern={{major}}.{{minor}},prefix=v,value=${{needs.get-version.outputs.version}}
+            type=semver,pattern={{major}},prefix=v,value=${{needs.get-version.outputs.version}}
+      - name: "Copy images"
+        run: |
+          for source in ${{ steps.meta.outputs.tags }}; do
+            # shellcheck disable=SC2001
+            dest="$(echo "$source" | sed -e 's,ghcr.io/svix/svix-server-staging,docker.io/svix/svix-server,')"
+            echo "Copying $source to $dest"
+            regctl image copy "$source" "$dest"
+          done

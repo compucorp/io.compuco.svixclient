@@ -1,0 +1,23 @@
+name: Kotlin Lint
+
+on:
+  workflow_call:
+
+jobs:
+  kotlin:
+    name: Kotlin Lint
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+
+      - name: Build
+        run: |
+          cd kotlin
+          ./gradlew build
