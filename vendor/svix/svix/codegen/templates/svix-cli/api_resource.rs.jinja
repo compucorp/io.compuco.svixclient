@@ -1,0 +1,318 @@
+// this file is @generated
+{% set resource_type_name = resource.name | to_upper_camel_case -%}
+{% set resource_id_name %}{{ resource.name | to_snake_case }}_id{% endset -%}
+{% if resource.name == "application" %}{% set resource_id_name = "app_id" %}{% endif -%}
+{% if resource.name == "message" %}{% set resource_id_name = "msg_id" %}{% endif -%}
+{% if resource.name == "integration" %}{% set resource_id_name = "integ_id" %}{% endif -%}
+{% set path_param_examples = {
+    "app_id": "app_abc000000000000000000000000",
+    "msg_id": "msg_abc000000000000000000000000",
+    "endpoint_id": "ep_abc000000000000000000000000",
+    "integ_id": "integ_abc000000000000000000000000",
+    "attempt_id": "atmpt_abc000000000000000000000000",
+    "stream_id": "strm_abc000000000000000000",
+    "sink_id": "sink_abc000000000000000000",
+    "source_id": "src_abc000000000000000000",
+    "task_id": "qtask_abc000000000000000000000000",
+    "event_type_name": "example.event",
+} -%}
+
+use clap::{Args, Subcommand};
+use svix::api::*;
+
+{% for _, sub in resource.subresources | items -%}
+use super::{{ sub.name | to_snake_case }}::{{ sub.name | to_upper_camel_case }}Args;
+{% endfor %}
+
+{%- macro get_type_example(field, api, indent) -%}
+    {%- if field.type.is_string_const() -%}
+        \"{{ field.type.string_const_val() }}\"
+    {%- elif field.type.is_unix_timestamp_ms() -%}
+        1234567890123
+    {%- elif field.type.is_duration_ms() -%}
+        60000
+    {%- elif field.type.is_datetime() -%}
+        \"2030-01-01T00:00:00Z\"
+    {%- elif field.type.is_u64() -%}
+        123
+    {%- elif field.type.is_bool() -%}
+        true
+    {%- elif field.type.is_int_or_uint() -%}
+        123
+    {%- elif field.type.is_list() or field.type.is_set() -%}
+        [{{ get_type_example({"type": field.type.inner_type()}, api, indent) }}]
+    {%- elif field.type.is_map() -%}
+        {\"key\": {{ get_type_example({"type": field.type.value_type()}, api, indent) }}}
+    {%- elif field.type.is_json_object() -%}
+        {\"key\": \"...\"}
+    {%- elif field.type.is_schema_ref() -%}
+        {%- set ref_type = api.types[field.type.to_rust()] -%}
+        {%- if ref_type is defined and ref_type.kind == "string_enum" -%}
+            \"{{ ref_type.values[0] }}\"
+        {%- elif ref_type is defined and ref_type.kind == "integer_enum" -%}
+            {{ ref_type.variants[0][1] }}
+        {%- elif ref_type is defined and ref_type.kind == "struct" -%}
+            {{ render_inline_object(ref_type, api, indent) }}
+        {%- else -%}
+            {\"...\": \"...\"}
+        {%- endif -%}
+    {%- else -%}
+        \"...\"
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro render_example_value(value, indent) -%}
+{%- if value is mapping -%}
+{
+{%- for k, v in value | items %}
+{{ indent }}  \"{{ k }}\": {{ render_example_value(v, indent + "  ") }}{{ "," if not loop.last else "" }}
+{%- endfor %}
+{{ indent }}}
+{%- else -%}
+{{ value | tojson | replace('\\', '\\\\') | replace('"', '\\"') }}
+{%- endif -%}
+{%- endmacro -%}
+
+{%- macro render_inline_object(schema, api, indent) -%}
+{
+{%- for f in schema.fields %}
+{{ indent }}  \"{{ f.name }}\": {% if f.example is defined %}{{ render_example_value(f.example, indent + "  ") }}{% else %}{{ get_type_example(f, api, indent + "  ") }}{% endif %}{{ "," if not loop.last else "" }}
+{%- endfor %}
+{{ indent }}}
+{%- endmacro -%}
+
+{%- macro render_schema_example(title, schema, api) -%}
+{{ title }}:
+{
+{%- for field in schema.fields | selectattr("positional", "false") %}
+  \"{{ field.name }}\": {% if field.example is defined %}{{ render_example_value(field.example, "  ") }}{% else %}{{ get_type_example(field, api, "  ") }}{% endif %}{{ "," if not loop.last else "" }}
+{%- endfor %}
+}
+{%- endmacro -%}
+
+{% for op in resource.operations -%}
+    {% if (op.query_params | length > 0) or (op.header_params | length > 0) -%}
+        {% set param_struct_type_name -%}
+            {{ resource_type_name }}{{ op.name | to_upper_camel_case }}Options
+        {%- endset -%}
+
+        #[derive(Args, Clone)]
+        pub struct {{ param_struct_type_name }} {
+            {% for p in op.query_params -%}
+                {% set ty = p.type.to_rust() -%}
+                {% if ty == "DateTime<Utc>" -%}
+                    {% set ty = "chrono::DateTime<chrono::Utc>" -%}
+                {% endif -%}
+                {% if not p.required %}{% set ty %}Option<{{ ty }}>{% endset %}{% endif -%}
+                {% if p.description is defined -%}
+                    {{ p.description | to_doc_comment(style="rust") }}
+                {% endif -%}
+                #[arg(long)]
+                pub {{ p.name | to_snake_case }}: {{ ty }},
+            {% endfor %}
+            {% for p in op.header_params -%}
+                {% set ty = "String" -%}
+                {% if not p.required %}{% set ty %}Option<{{ ty }}>{% endset %}{% endif %}
+                {% if p.description is defined -%}
+                    {{ p.description | to_doc_comment(style="rust") }}
+                {% endif -%}
+                #[arg(long)]
+                pub {{ p.name | to_snake_case }}: {{ ty }},
+            {% endfor -%}
+        }
+
+        impl From<{{ param_struct_type_name }}> for svix::api::{{ param_struct_type_name }} {
+            fn from(
+                value: {{ param_struct_type_name }},
+            ) -> Self {
+                let {{ param_struct_type_name }} {
+                    {% for p in op.query_params -%}
+                        {{ p.name | to_snake_case }},
+                    {% endfor -%}
+                    {% for p in op.header_params -%}
+                        {{ p.name | to_snake_case }},
+                    {% endfor -%}
+                } = value;
+                Self {
+                    {% for p in op.query_params -%}
+                        {% if p.type.is_datetime() -%}
+                            {{ p.name | to_snake_case }}:
+                            {%- if p.required %}
+                            {{ p.name | to_snake_case }}.to_rfc3339(),
+                            {%- else %}
+                            {{ p.name | to_snake_case }}.map(|dt| dt.to_rfc3339()),
+                            {% endif -%}
+                        {% else -%}
+                            {{ p.name | to_snake_case }},
+                        {% endif -%}
+                    {% endfor -%}
+                    {% for p in op.header_params -%}
+                        {{ p.name | to_snake_case }},
+                    {% endfor -%}
+                }
+            }
+        }
+    {% endif %}
+{% endfor %}
+
+#[derive(Args)]
+#[command(args_conflicts_with_subcommands = true, flatten_help = true)]
+pub struct {{ resource_type_name }}Args {
+    #[command(subcommand)]
+    pub command: {{ resource_type_name }}Commands,
+}
+
+#[derive(Subcommand)]
+pub enum {{ resource_type_name }}Commands {
+    {% for name, sub in resource.subresources | items -%}
+        {{ name | to_upper_camel_case }}({{ sub.name | to_upper_camel_case }}Args),
+    {% endfor -%}
+
+    {% for op in resource.operations -%}
+        {% set has_params = (op.query_params | length > 0) or (op.header_params | length > 0) -%}
+
+        {% if op.description is defined -%}
+            {{ op.description | to_doc_comment(style="rust") }}
+        {% endif -%}
+        #[command(help_template = concat!(
+            "{about-with-newline}\n",
+            "{usage-heading} {usage}\n\n",
+            "Example: svix {{ resource.name | replace(".", " ") }} {{ op.name }}{% for p in op.path_params %} {{ path_param_examples[p] | default(p | upper) }}{% endfor %}{% if op.request_body_schema_name is defined %} {...}{% endif %}\n",
+            "{after-help}",
+            "\n",
+            "{all-args}",
+        ))]
+        {% if op.request_body_schema_name is defined or op.response_body_schema_name is defined -%}
+        #[command(after_help = "
+        {%- if op.request_body_schema_name is defined -%}
+            {{- render_schema_example("Example body", api.types[op.request_body_schema_name], api) -}}
+        {%- endif -%}
+        {%- if op.request_body_schema_name is defined and op.response_body_schema_name is defined -%}
+\n\n
+        {%- endif -%}
+        {%- if op.response_body_schema_name is defined -%}
+            {{- render_schema_example("Example response", api.types[op.response_body_schema_name], api) -}}
+        {%- endif -%}
+\n")]
+        {% endif -%}
+        {{ op.name | to_upper_camel_case }} {
+            {# path parameters -#}
+            {% for p in op.path_params -%}
+                {% if p == resource_id_name -%}
+                    id: String,
+                {% else -%}
+                    {{ p }}: String,
+                {% endif -%}
+            {% endfor -%}
+
+            {# body parameter struct -#}
+            {% if op.request_body_schema_name is defined -%}
+                {% set body_schema = api.types[op.request_body_schema_name] -%}
+                {% set body_schema_all_optional = body_schema.fields | selectattr("required") | length == 0 -%}
+
+                {{ op.request_body_schema_name | to_snake_case }}:
+                {% if body_schema_all_optional %}
+                Option<crate::json::JsonOf<{{ op.request_body_schema_name }}>>
+                {% else %}
+                crate::json::JsonOf<{{ op.request_body_schema_name }}>
+                {% endif %}
+                ,
+            {% endif -%}
+
+            {# query / header parameters -#}
+            {% if has_params -%}
+            #[clap(flatten)]
+            options: {{ resource_type_name }}{{ op.name | to_upper_camel_case }}Options,
+            {% endif -%}
+        },
+    {% endfor %}
+}
+
+impl {{ resource_type_name }}Commands {
+    pub async fn exec(self, client: &Svix, color_mode: colored_json::ColorMode) -> anyhow::Result<()> {
+        match self {
+            {% for name, _ in resource.subresources | items -%}
+                Self::{{ name | to_upper_camel_case }}(args) => {
+                    args.command.exec(client, color_mode).await?;
+                }
+            {% endfor -%}
+
+            {% for op in resource.operations -%}
+                {% set has_params = (op.query_params | length > 0) or (op.header_params | length > 0) -%}
+
+                Self::{{ op.name | to_upper_camel_case }} {
+                    {# path parameters -#}
+                    {% for p in op.path_params -%}
+                        {% if p == resource_id_name -%}
+                            id,
+                        {% else -%}
+                            {{ p }},
+                        {% endif -%}
+                    {% endfor -%}
+
+                    {# body parameter struct -#}
+                    {% if op.request_body_schema_name is defined -%}
+                        {{ op.request_body_schema_name | to_snake_case }},
+                    {% endif -%}
+
+                    {# query / header parameters -#}
+                    {% if has_params %}options,{% endif -%}
+                } => {
+                    {% if op.deprecated -%}
+                        #[allow(deprecated)]
+                    {% endif -%}
+                    {% if op.response_body_schema_name is defined -%}
+                        let resp =
+                    {% endif -%}
+
+                    client
+                        {% for segment in resource.name | split(".") -%}
+                        .{{ segment | to_snake_case }}()
+                        {% endfor -%}
+                        .{{ op.name | to_snake_case }}(
+                            {# path parameters -#}
+                            {% for p in op.path_params -%}
+                                {% if p == resource_id_name -%}
+                                    id,
+                                {% else -%}
+                                    {{ p }},
+                                {% endif -%}
+                            {% endfor -%}
+
+                            {# body parameter struct -#}
+                            {% if op.request_body_schema_name is defined -%}
+                                {% set body_schema = api.types[op.request_body_schema_name] -%}
+                                {% set body_schema_all_optional
+                                    = body_schema.fields | selectattr("required") | length == 0 -%}
+
+                                {{ op.request_body_schema_name | to_snake_case }}
+                                {% if body_schema_all_optional -%}
+                                    .unwrap_or_default()
+                                {% endif -%}
+                                    .into_inner(),
+                            {% endif -%}
+
+                            {# query parameters -#}
+                            {% if has_params %}
+                                {% set has_required_params =
+                                    (op.query_params | selectattr("required") | length > 0) or
+                                    (op.header_params | selectattr("required") | length > 0) -%}
+                                {%- if has_required_params -%}
+                                    options.into(),
+                                {% else -%}
+                                    Some(options.into()),
+                                {% endif -%}
+                            {% endif -%}
+                        )
+                        .await?;
+
+                    {%- if op.response_body_schema_name is defined %}
+                        crate::json::print_json_output(&resp, color_mode)?;
+                    {%- endif %}
+                }
+            {% endfor %}
+        }
+
+        Ok(())
+    }
+}
