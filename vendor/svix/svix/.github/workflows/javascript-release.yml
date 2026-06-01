@@ -1,0 +1,34 @@
+name: JavaScript Release
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    environment: release
+    defaults:
+      run:
+        working-directory: javascript
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'latest'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install modules and update NPM
+        run: |
+          npm install -g npm@latest
+          npm install
+
+      - name: Publish
+        run: |
+          npm publish

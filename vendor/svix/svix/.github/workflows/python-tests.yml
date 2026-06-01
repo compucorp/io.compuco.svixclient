@@ -1,0 +1,29 @@
+name: Python Tests
+on:
+  workflow_call:
+jobs:
+  python-tests:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Pull svix server image (and dependencies)
+        run: docker compose pull
+        working-directory: ./server
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install deps
+        working-directory: ./python
+        run: uv sync
+
+      - name: Run Python tests
+        run: uv run pytest -sv
+        env:
+          CI: '1'
+        working-directory: ./python

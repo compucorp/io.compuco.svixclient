@@ -1,0 +1,81 @@
+<?php
+
+// this file is @generated
+declare(strict_types=1);
+
+namespace Svix\Api;
+
+use Svix\Exception\ApiException;
+use Svix\Models\PollingEndpointConsumerSeekIn;
+use Svix\Models\PollingEndpointConsumerSeekOut;
+use Svix\Models\PollingEndpointOut;
+use Svix\Request\SvixHttpClient;
+
+class MessagePoller
+{
+    public function __construct(
+        private readonly SvixHttpClient $client,
+    ) {
+    }
+
+    /**
+     * Reads the stream of created messages for an application, filtered on the Sink's event types and Channels.
+     *
+     * @throws ApiException
+     */
+    public function poll(
+        string $appId,
+        string $sinkId,
+        ?MessagePollerPollOptions $options = null,
+    ): PollingEndpointOut {
+        $request = $this->client->newReq('GET', "/api/v1/app/{$appId}/poller/{$sinkId}");
+        $request->setQueryParam('limit', $options?->limit);
+        $request->setQueryParam('iterator', $options?->iterator);
+        $request->setQueryParam('event_type', $options?->eventType);
+        $request->setQueryParam('channel', $options?->channel);
+        $request->setQueryParam('after', $options?->after);
+        $res = $this->client->send($request);
+
+        return PollingEndpointOut::fromJson($res);
+    }
+
+    /**
+     * Reads the stream of created messages for an application, filtered on the Sink's event types and
+     * Channels, using server-managed iterator tracking.
+     *
+     * @throws ApiException
+     */
+    public function consumerPoll(
+        string $appId,
+        string $sinkId,
+        string $consumerId,
+        ?MessagePollerConsumerPollOptions $options = null,
+    ): PollingEndpointOut {
+        $request = $this->client->newReq('GET', "/api/v1/app/{$appId}/poller/{$sinkId}/consumer/{$consumerId}");
+        $request->setQueryParam('limit', $options?->limit);
+        $request->setQueryParam('iterator', $options?->iterator);
+        $res = $this->client->send($request);
+
+        return PollingEndpointOut::fromJson($res);
+    }
+
+    /**
+     * Sets the starting offset for the consumer of a polling endpoint.
+     *
+     * @throws ApiException
+     */
+    public function consumerSeek(
+        string $appId,
+        string $sinkId,
+        string $consumerId,
+        PollingEndpointConsumerSeekIn $pollingEndpointConsumerSeekIn,
+        ?MessagePollerConsumerSeekOptions $options = null,
+    ): PollingEndpointConsumerSeekOut {
+        $request = $this->client->newReq('POST', "/api/v1/app/{$appId}/poller/{$sinkId}/consumer/{$consumerId}/seek");
+        $request->setHeaderParam('idempotency-key', $options?->idempotencyKey);
+        $request->setBody(json_encode($pollingEndpointConsumerSeekIn));
+        $res = $this->client->send($request);
+
+        return PollingEndpointConsumerSeekOut::fromJson($res);
+    }
+}
