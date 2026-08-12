@@ -1,0 +1,37 @@
+name: C# Lint
+
+on:
+  workflow_call:
+
+defaults:
+  run:
+    working-directory: csharp
+
+jobs:
+  dotnet:
+    name: C# Lint
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup .NET Core SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install dependencies
+        run: |
+          dotnet restore
+          dotnet tool install csharpier -g --version 1.0.1
+
+      - name: Check formatting
+        run: |
+          csharpier check Svix.Tests
+          csharpier check Svix
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test Svix.Tests

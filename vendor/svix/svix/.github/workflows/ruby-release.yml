@@ -1,0 +1,41 @@
+name: Ruby Release
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  dotnet:
+    name: Ruby Release
+    runs-on: ubuntu-24.04
+    environment: release
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: 3.4.2
+
+      - name: Install dependencies
+        run: |
+          cd ruby
+          bundler install
+
+      - name: Build
+        run: |
+          cd ruby
+          bundler exec rake build
+
+      - name: Configure RubyGems credentials (trusted publishing)
+        uses: rubygems/configure-rubygems-credentials@main
+
+      - name: Publish
+        run: |
+          cd ruby
+          gem push pkg/*.gem
