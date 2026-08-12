@@ -252,9 +252,11 @@ class SvixWebhookMiddleware {
     // Build routing filter using processor-specific strategy.
     $filter = \CRM_Svixclient_Client::buildFilter($config->getFilterStrategy($routingValue));
 
-    // Disable any existing destinations for this URL.
+    $description = str_replace('{value}', $routingValue, $config->getDescriptionTemplate());
+
+    // Disable any existing destinations for this URL and routing value.
     $client = new \CRM_Svixclient_Client();
-    $this->disableExistingDestinations($client, $sourceId, $webhookUrl);
+    $this->disableExistingDestinations($client, $sourceId, $webhookUrl, $description, $paymentProcessorId);
 
     // Create new destination.
     return $this->createNewDestination(
@@ -262,7 +264,7 @@ class SvixWebhookMiddleware {
       $sourceId,
       $webhookUrl,
       $filter,
-      $config->getDescriptionTemplate(),
+      $description,
       $routingValue,
       $paymentProcessorId,
       $contactId
@@ -270,10 +272,13 @@ class SvixWebhookMiddleware {
   }
 
   /**
-   * Find and disable existing destinations with the same URL.
+   * Find and disable existing destinations with the same URL and description.
    *
-   * Ensures only one destination per site URL. Disables all existing
-   * destinations that match the webhook URL before creating a new one.
+   * Ensures only one destination per site URL and routing value. The
+   * description embeds the routing value (e.g. the GoCardless organisation
+   * ID), so destinations belonging to other routing values — such as a Live
+   * account's destination while re-registering a Test account on the same
+   * site — are left untouched.
    *
    * @param \CRM_Svixclient_Client $client
    *   The Svix client.
@@ -281,17 +286,28 @@ class SvixWebhookMiddleware {
    *   The Svix source ID.
    * @param string $webhookUrl
    *   The webhook URL to match.
+   * @param string $description
+   *   The destination description to match (routing value included).
+   * @param int $paymentProcessorId
+   *   The payment processor being (re-)registered. Destinations recorded
+   *   locally against a different processor are never disabled, even when
+   *   URL and description match (e.g. the same sandbox organisation
+   *   connected as both Live and Test in a dev environment).
    */
   private function disableExistingDestinations(
     \CRM_Svixclient_Client $client,
     string $sourceId,
     string $webhookUrl,
+    string $description,
+    int $paymentProcessorId,
   ): void {
     $destinations = $client->listDestinations($sourceId);
+    $otherProcessorDestinationIds = $this->getOtherProcessorDestinationIds($paymentProcessorId);
 
     \Civi::log()->debug('Checking for existing destinations to disable', [
       'source_id' => $sourceId,
       'webhook_url' => $webhookUrl,
+      'description' => $description,
       'total_destinations' => count($destinations),
     ]);
 
@@ -300,14 +316,22 @@ class SvixWebhookMiddleware {
       $destUrl = rtrim($dest['url'] ?? '', '?/');
       $compareUrl = rtrim($webhookUrl, '?/');
 
-      \Civi::log()->debug('Comparing destination URL', [
-        'destination_id' => $dest['id'] ?? 'unknown',
-        'dest_url' => $destUrl,
-        'compare_url' => $compareUrl,
-        'match' => ($destUrl === $compareUrl),
-      ]);
-
       if ($destUrl !== $compareUrl) {
+        continue;
+      }
+
+      // Only disable destinations for the same routing value. The site's
+      // Live and Test accounts share one webhook URL, so URL alone would
+      // disable the other account's destination.
+      if (($dest['description'] ?? '') !== $description) {
+        continue;
+      }
+
+      // Never disable a destination registered to another payment
+      // processor — on dev environments the same sandbox organisation can
+      // be connected as both Live and Test, so even the description
+      // cannot tell the two apart.
+      if (in_array($dest['id'] ?? '', $otherProcessorDestinationIds, TRUE)) {
         continue;
       }
 
@@ -320,10 +344,28 @@ class SvixWebhookMiddleware {
         'source_id' => $sourceId,
         'destination_id' => $dest['id'],
         'url' => $destUrl,
+        'description' => $description,
       ]);
 
       $client->disableDestination($sourceId, $dest['id']);
     }
+  }
+
+  /**
+   * Get Svix destination IDs registered to other payment processors.
+   *
+   * @param int $paymentProcessorId
+   *   The payment processor being (re-)registered.
+   *
+   * @return string[]
+   *   Svix destination IDs belonging to other payment processors.
+   */
+  private function getOtherProcessorDestinationIds(int $paymentProcessorId): array {
+    return SvixDestination::get(FALSE)
+      ->addSelect('svix_destination_id')
+      ->addWhere('payment_processor_id', '!=', $paymentProcessorId)
+      ->execute()
+      ->column('svix_destination_id');
   }
 
   /**
@@ -337,8 +379,8 @@ class SvixWebhookMiddleware {
    *   The webhook URL.
    * @param string $filter
    *   The routing filter code.
-   * @param string $descriptionTemplate
-   *   The description template.
+   * @param string $description
+   *   The destination description (routing value included).
    * @param string $routingValue
    *   The routing value.
    * @param int $paymentProcessorId
@@ -354,13 +396,11 @@ class SvixWebhookMiddleware {
     string $sourceId,
     string $webhookUrl,
     string $filter,
-    string $descriptionTemplate,
+    string $description,
     string $routingValue,
     int $paymentProcessorId,
     ?int $contactId,
   ): string {
-    $description = str_replace('{value}', $routingValue, $descriptionTemplate);
-
     // Create destination via Svix client.
     $destination = $client->createDestination($sourceId, $webhookUrl, $description);
 
