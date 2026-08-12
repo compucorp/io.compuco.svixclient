@@ -377,6 +377,8 @@ class SvixWebhookMiddlewareTest extends \BaseHeadlessTest {
       ->addValue('is_test', FALSE)
       ->execute()
       ->first();
+    $this->assertIsArray($liveProcessor);
+
     $testProcessor = PaymentProcessor::create(FALSE)
       ->addValue('name', 'GoCardless Test')
       ->addValue('payment_processor_type_id:name', 'Dummy')
@@ -384,6 +386,7 @@ class SvixWebhookMiddlewareTest extends \BaseHeadlessTest {
       ->addValue('is_test', TRUE)
       ->execute()
       ->first();
+    $this->assertIsArray($testProcessor);
 
     SvixDestination::create(FALSE)
       ->addValue('source_id', 'src_123')

@@ -361,12 +361,11 @@ class SvixWebhookMiddleware {
    *   Svix destination IDs belonging to other payment processors.
    */
   private function getOtherProcessorDestinationIds(int $paymentProcessorId): array {
-    $records = SvixDestination::get(FALSE)
+    return SvixDestination::get(FALSE)
       ->addSelect('svix_destination_id')
       ->addWhere('payment_processor_id', '!=', $paymentProcessorId)
-      ->execute();
-
-    return array_column((array) $records, 'svix_destination_id');
+      ->execute()
+      ->column('svix_destination_id');
   }
 
   /**
