@@ -249,8 +249,8 @@ class SvixWebhookMiddleware {
     // Get webhook URL.
     $webhookUrl = $this->getWebhookUrlForProcessor($processorType);
 
-    // Build routing filter.
-    $filter = \CRM_Svixclient_Client::buildRoutingFilter($config->getRoutingField(), $routingValue);
+    // Build routing filter using processor-specific strategy.
+    $filter = \CRM_Svixclient_Client::buildFilter($config->getFilterStrategy($routingValue));
 
     // Disable any existing destinations for this URL.
     $client = new \CRM_Svixclient_Client();
