@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace Civi\Svixclient\Enum;
 
+use Civi\Svixclient\Filter\ArrayFieldFilter;
+use Civi\Svixclient\Filter\FilterStrategyInterface;
+use Civi\Svixclient\Filter\SimpleFieldFilter;
+
 /**
  * Configuration for payment processors that use Svix webhook routing.
  *
@@ -80,6 +84,26 @@ enum SvixProcessorConfig: string {
    */
   public static function fromProcessorType(string $processorType): ?self {
     return self::tryFrom($processorType);
+  }
+
+  /**
+   * Get the filter strategy for this processor.
+   *
+   * Returns the appropriate filter strategy based on the processor type.
+   * Stripe uses a simple field filter; GoCardless uses an array field
+   * filter to handle multi-organisation webhook payloads.
+   *
+   * @param string $routingValue
+   *   The routing value to match (e.g., 'acct_xxx' or 'OR000123').
+   *
+   * @return \Civi\Svixclient\Filter\FilterStrategyInterface
+   *   The filter strategy instance.
+   */
+  public function getFilterStrategy(string $routingValue): FilterStrategyInterface {
+    return match ($this) {
+      self::StripeConnect => new SimpleFieldFilter($this->getRoutingField(), $routingValue),
+      self::Gocardless => new ArrayFieldFilter('events', 'links.organisation', $routingValue),
+    };
   }
 
   /**
