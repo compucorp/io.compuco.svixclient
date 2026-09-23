@@ -2,6 +2,9 @@
 
 namespace Civi\Svixclient\Service;
 
+use Civi\Api4\PaymentProcessor;
+use Civi\Api4\SvixDestination;
+
 /**
  * Tests for the SvixWebhookMiddleware class.
  *
@@ -246,6 +249,211 @@ class SvixWebhookMiddlewareTest extends \BaseHeadlessTest {
 
     // If we got here without exception, the test passes.
     $this->assertTrue(TRUE);
+  }
+
+  /**
+   * Test disabling only targets destinations with the same description.
+   *
+   * A site's Live and Test accounts share one webhook URL. Re-registering
+   * one account must not disable the other account's destination.
+   */
+  public function testDisableExistingDestinationsLeavesOtherRoutingValuesUntouched(): void {
+    $webhookUrl = 'https://example.org/civicrm/gocardless/webhook';
+    $destinations = [
+      [
+        'id' => 'ep_live',
+        'url' => $webhookUrl,
+        'description' => 'CiviCRM GoCardless - OR_LIVE',
+        'disabled' => FALSE,
+      ],
+      [
+        'id' => 'ep_test',
+        'url' => $webhookUrl,
+        'description' => 'CiviCRM GoCardless - OR_TEST',
+        'disabled' => FALSE,
+      ],
+    ];
+
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->method('listDestinations')->willReturn($destinations);
+    $client->expects($this->once())
+      ->method('disableDestination')
+      ->with('src_123', 'ep_test');
+
+    $this->invokeDisableExistingDestinations(
+      $client,
+      'src_123',
+      $webhookUrl,
+      'CiviCRM GoCardless - OR_TEST'
+    );
+  }
+
+  /**
+   * Test disabling matches URLs with trailing slash or query separator.
+   */
+  public function testDisableExistingDestinationsNormalizesUrls(): void {
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->method('listDestinations')->willReturn([
+      [
+        'id' => 'ep_old',
+        'url' => 'https://example.org/civicrm/gocardless/webhook/?',
+        'description' => 'CiviCRM GoCardless - OR_TEST',
+        'disabled' => FALSE,
+      ],
+    ]);
+    $client->expects($this->once())
+      ->method('disableDestination')
+      ->with('src_123', 'ep_old');
+
+    $this->invokeDisableExistingDestinations(
+      $client,
+      'src_123',
+      'https://example.org/civicrm/gocardless/webhook',
+      'CiviCRM GoCardless - OR_TEST'
+    );
+  }
+
+  /**
+   * Test already-disabled destinations are not disabled again.
+   */
+  public function testDisableExistingDestinationsSkipsAlreadyDisabled(): void {
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->method('listDestinations')->willReturn([
+      [
+        'id' => 'ep_disabled',
+        'url' => 'https://example.org/civicrm/gocardless/webhook',
+        'description' => 'CiviCRM GoCardless - OR_TEST',
+        'disabled' => TRUE,
+      ],
+    ]);
+    $client->expects($this->never())->method('disableDestination');
+
+    $this->invokeDisableExistingDestinations(
+      $client,
+      'src_123',
+      'https://example.org/civicrm/gocardless/webhook',
+      'CiviCRM GoCardless - OR_TEST'
+    );
+  }
+
+  /**
+   * Test destinations for a different URL are not disabled.
+   */
+  public function testDisableExistingDestinationsSkipsOtherUrls(): void {
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->method('listDestinations')->willReturn([
+      [
+        'id' => 'ep_other_site',
+        'url' => 'https://other-site.org/civicrm/gocardless/webhook',
+        'description' => 'CiviCRM GoCardless - OR_TEST',
+        'disabled' => FALSE,
+      ],
+    ]);
+    $client->expects($this->never())->method('disableDestination');
+
+    $this->invokeDisableExistingDestinations(
+      $client,
+      'src_123',
+      'https://example.org/civicrm/gocardless/webhook',
+      'CiviCRM GoCardless - OR_TEST'
+    );
+  }
+
+  /**
+   * Test a sibling processor's destination with an identical description.
+   *
+   * On dev environments the same sandbox organisation can be connected as
+   * both Live and Test, so URL and description are identical for both
+   * destinations. The local SvixDestination record must break the tie.
+   */
+  public function testDisableExistingDestinationsSkipsSiblingProcessorWithSameDescription(): void {
+    $webhookUrl = 'https://example.org/civicrm/gocardless/webhook';
+    $description = 'CiviCRM GoCardless - OR_SHARED';
+
+    $liveProcessor = PaymentProcessor::create(FALSE)
+      ->addValue('name', 'GoCardless Live')
+      ->addValue('payment_processor_type_id:name', 'Dummy')
+      ->addValue('is_active', TRUE)
+      ->addValue('is_test', FALSE)
+      ->execute()
+      ->first();
+    $this->assertIsArray($liveProcessor);
+
+    $testProcessor = PaymentProcessor::create(FALSE)
+      ->addValue('name', 'GoCardless Test')
+      ->addValue('payment_processor_type_id:name', 'Dummy')
+      ->addValue('is_active', TRUE)
+      ->addValue('is_test', TRUE)
+      ->execute()
+      ->first();
+    $this->assertIsArray($testProcessor);
+
+    SvixDestination::create(FALSE)
+      ->addValue('source_id', 'src_123')
+      ->addValue('svix_destination_id', 'ep_live')
+      ->addValue('payment_processor_id', $liveProcessor['id'])
+      ->execute();
+    SvixDestination::create(FALSE)
+      ->addValue('source_id', 'src_123')
+      ->addValue('svix_destination_id', 'ep_test')
+      ->addValue('payment_processor_id', $testProcessor['id'])
+      ->execute();
+
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->method('listDestinations')->willReturn([
+      [
+        'id' => 'ep_live',
+        'url' => $webhookUrl,
+        'description' => $description,
+        'disabled' => FALSE,
+      ],
+      [
+        'id' => 'ep_test',
+        'url' => $webhookUrl,
+        'description' => $description,
+        'disabled' => FALSE,
+      ],
+    ]);
+
+    // Re-registering the Test processor: only its own stale destination
+    // may be disabled — never the Live processor's.
+    $client->expects($this->once())
+      ->method('disableDestination')
+      ->with('src_123', 'ep_test');
+
+    $this->invokeDisableExistingDestinations(
+      $client,
+      'src_123',
+      $webhookUrl,
+      $description,
+      (int) $testProcessor['id']
+    );
+  }
+
+  /**
+   * Invoke the private disableExistingDestinations method.
+   *
+   * @param \CRM_Svixclient_Client $client
+   *   The (mocked) Svix client.
+   * @param string $sourceId
+   *   The Svix source ID.
+   * @param string $webhookUrl
+   *   The webhook URL to match.
+   * @param string $description
+   *   The destination description to match.
+   * @param int $paymentProcessorId
+   *   The payment processor being (re-)registered.
+   */
+  private function invokeDisableExistingDestinations(
+    \CRM_Svixclient_Client $client,
+    string $sourceId,
+    string $webhookUrl,
+    string $description,
+    int $paymentProcessorId = 99999,
+  ): void {
+    $method = new \ReflectionMethod($this->middleware, 'disableExistingDestinations');
+    $method->setAccessible(TRUE);
+    $method->invoke($this->middleware, $client, $sourceId, $webhookUrl, $description, $paymentProcessorId);
   }
 
 }
