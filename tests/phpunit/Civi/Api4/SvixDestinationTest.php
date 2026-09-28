@@ -25,6 +25,7 @@ class SvixDestinationTest extends \BaseHeadlessTest {
     $result = SvixDestination::create(FALSE)
       ->addValue('source_id', 'src_test_123')
       ->addValue('svix_destination_id', 'dest_test_456')
+      ->addValue('type', 'Dummy')
       ->addValue('payment_processor_id', $processor['id'])
       ->execute();
 
@@ -33,6 +34,7 @@ class SvixDestinationTest extends \BaseHeadlessTest {
     $this->assertEquals('src_test_123', $destination['source_id']);
     $this->assertEquals('dest_test_456', $destination['svix_destination_id']);
     $this->assertEquals($processor['id'], $destination['payment_processor_id']);
+    $this->assertEquals('Dummy', $destination['type']);
     // created_by is readonly and auto-set by CiviCRM.
     $this->assertNotEmpty($destination['created_date']);
   }
@@ -54,6 +56,7 @@ class SvixDestinationTest extends \BaseHeadlessTest {
     SvixDestination::create(FALSE)
       ->addValue('source_id', 'src_get_test')
       ->addValue('svix_destination_id', 'dest_get_test')
+      ->addValue('type', 'Dummy')
       ->addValue('payment_processor_id', $processor['id'])
       ->execute();
 
@@ -83,6 +86,7 @@ class SvixDestinationTest extends \BaseHeadlessTest {
     $created = SvixDestination::create(FALSE)
       ->addValue('source_id', 'src_delete_test')
       ->addValue('svix_destination_id', 'dest_delete_test')
+      ->addValue('type', 'Dummy')
       ->addValue('payment_processor_id', $processor['id'])
       ->execute()
       ->first();
@@ -119,6 +123,7 @@ class SvixDestinationTest extends \BaseHeadlessTest {
     $destination = SvixDestination::create(FALSE)
       ->addValue('source_id', 'src_cascade_test')
       ->addValue('svix_destination_id', 'dest_cascade_test')
+      ->addValue('type', 'Dummy')
       ->addValue('payment_processor_id', $processor['id'])
       ->execute()
       ->first();
@@ -134,6 +139,47 @@ class SvixDestinationTest extends \BaseHeadlessTest {
       ->execute();
 
     $this->assertCount(0, $result);
+  }
+
+  /**
+   * Test a destination can be created without a payment processor.
+   */
+  public function testCreateDestinationWithoutPaymentProcessor(): void {
+    $created = SvixDestination::create(FALSE)
+      ->addValue('source_id', 'src_impact_stack_test')
+      ->addValue('svix_destination_id', 'dest_impact_stack_test')
+      ->addValue('type', 'Impact Stack')
+      ->execute()
+      ->first();
+
+    $destination = SvixDestination::get(FALSE)
+      ->addSelect('type', 'payment_processor_id')
+      ->addWhere('id', '=', $created['id'])
+      ->execute()
+      ->first();
+
+    $this->assertEquals('Impact Stack', $destination['type']);
+    $this->assertNull($destination['payment_processor_id']);
+  }
+
+  /**
+   * Test destinations can be looked up by their type.
+   */
+  public function testGetDestinationByType(): void {
+    SvixDestination::create(FALSE)
+      ->addValue('source_id', 'src_type_lookup')
+      ->addValue('svix_destination_id', 'dest_type_lookup')
+      ->addValue('type', 'Impact Stack')
+      ->addValue('signing_secret', 'whsec_type_lookup')
+      ->execute();
+
+    $destination = SvixDestination::get(FALSE)
+      ->addWhere('type', '=', 'Impact Stack')
+      ->execute()
+      ->first();
+
+    $this->assertNotNull($destination);
+    $this->assertEquals('dest_type_lookup', $destination['svix_destination_id']);
   }
 
 }

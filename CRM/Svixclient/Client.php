@@ -216,6 +216,55 @@ class CRM_Svixclient_Client {
   }
 
   /**
+   * Get a source from Svix.
+   *
+   * @param string $sourceId
+   *   The Svix source ID.
+   *
+   * @return array|null
+   *   The source data, or NULL if not found.
+   *
+   * @throws CRM_Core_Exception
+   *   If the API call fails with a non-404 error.
+   */
+  public function getSource(string $sourceId): ?array {
+    try {
+      return $this->request('GET', "/ingest/api/v1/source/{$sourceId}");
+    }
+    catch (\Exception $e) {
+      if (strpos($e->getMessage(), '(404)') !== FALSE) {
+        \Civi::log()->info('Svix source configured in settings was not found', ['source_id' => $sourceId]);
+        return NULL;
+      }
+
+      \Civi::log()->error('Failed to get Svix source', [
+        'source_id' => $sourceId,
+        'error' => $e->getMessage(),
+      ]);
+      throw $e;
+    }
+  }
+
+  /**
+   * Get the ingest URL for a source.
+   *
+   * @param string $sourceId
+   *   The Svix source ID.
+   *
+   * @return string|null
+   *   The ingest URL, or NULL if the source does not exist or has none.
+   *
+   * @throws CRM_Core_Exception
+   *   If the API call fails with a non-404 error.
+   */
+  public function getIngestUrl(string $sourceId): ?string {
+    $source = $this->getSource($sourceId);
+    $ingestUrl = $source['ingestUrl'] ?? NULL;
+
+    return is_string($ingestUrl) && $ingestUrl !== '' ? $ingestUrl : NULL;
+  }
+
+  /**
    * List all destinations for a source.
    *
    * @param string $sourceId

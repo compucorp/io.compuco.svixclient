@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Civi\Svixclient\Service;
 
 use Civi\Api4\SvixDestination;
+use Civi\Svixclient\Enum\SvixIntegrationConfig;
 use Civi\Svixclient\Enum\SvixProcessorConfig;
 
 /**
@@ -43,8 +44,6 @@ class SvixWebhookMiddleware {
 
   /**
    * Get Svix headers from the current request.
-   *
-   * Extracts the three required Svix headers from $_SERVER.
    *
    * @return array
    *   Array with keys: svix-id, svix-timestamp, svix-signature.
@@ -170,6 +169,227 @@ class SvixWebhookMiddleware {
   }
 
   /**
+   * Verify a Svix-forwarded webhook for a given destination type.
+   *
+   * @param string $payload
+   *   The raw webhook payload (POST body).
+   * @param string $type
+   *   The integration name, e.g. 'Impact Stack'.
+   * @param array|null $headers
+   *   Optional Svix headers. If not provided, extracts from current request.
+   *
+   * @return array
+   *   Result array with keys: valid, message, error.
+   */
+  public function verifyForType(string $payload, string $type, ?array $headers = NULL): array {
+    $secret = $this->getSecretForType($type);
+
+    if ($secret === NULL) {
+      return [
+        'valid' => FALSE,
+        'message' => 'No Svix signing secret found for type',
+        'error' => "No Svix destination configured for type: {$type}",
+      ];
+    }
+
+    try {
+      $isValid = \CRM_Svixclient_Client::verifyWebhook($payload, $headers ?? $this->getSvixHeaders(), $secret);
+
+      return [
+        'valid' => $isValid,
+        'message' => 'Webhook signature verified successfully',
+        'error' => NULL,
+      ];
+    }
+    catch (\Exception $e) {
+      \Civi::log()->warning('Svix webhook verification failed', [
+        'type' => $type,
+        'error' => $e->getMessage(),
+      ]);
+
+      return [
+        'valid' => FALSE,
+        'message' => 'Webhook signature verification failed',
+        'error' => $e->getMessage(),
+      ];
+    }
+  }
+
+  /**
+   * Get the stored destination record for a destination type.
+   *
+   * @param string $type
+   *   The integration name, e.g. 'Impact Stack'.
+   *
+   * @return array|null
+   *   The destination record, or NULL if none exists.
+   */
+  public function getDestinationForType(string $type): ?array {
+    try {
+      $result = SvixDestination::get(FALSE)
+        ->addWhere('type', '=', $type)
+        ->addOrderBy('id', 'DESC')
+        ->execute()
+        ->first();
+
+      return is_array($result) ? $result : NULL;
+    }
+    catch (\Exception $e) {
+      \Civi::log()->error('Failed to get Svix destination by type', [
+        'type' => $type,
+        'error' => $e->getMessage(),
+      ]);
+      return NULL;
+    }
+  }
+
+  /**
+   * Get the Svix signing secret for a destination type.
+   *
+   * @param string $type
+   *   The integration name, e.g. 'Impact Stack'.
+   *
+   * @return string|null
+   *   The signing secret, or NULL if not found.
+   */
+  public function getSecretForType(string $type): ?string {
+    $destination = $this->getDestinationForType($type);
+
+    if ($destination === NULL || empty($destination['signing_secret'])) {
+      \Civi::log()->info('No Svix signing secret found', ['type' => $type]);
+      return NULL;
+    }
+
+    return $destination['signing_secret'];
+  }
+
+  /**
+   * Check whether a destination is registered for a destination type.
+   *
+   * @param string $type
+   *   The integration name, e.g. 'Impact Stack'.
+   *
+   * @return bool
+   *   TRUE if a Svix destination exists for this type.
+   */
+  public function isEnabledForType(string $type): bool {
+    return $this->getDestinationForType($type) !== NULL;
+  }
+
+  /**
+   * Get the configuration status for a non-payment-processor integration.
+   *
+   * @param string $type
+   *   The integration name, e.g. 'Impact Stack'.
+   *
+   * @return array{enabled: bool, message: string}
+   *   Status array with an enabled flag and a descriptive message.
+   */
+  public function getIntegrationConfigurationStatus(string $type): array {
+    $config = SvixIntegrationConfig::fromType($type);
+    if ($config === NULL) {
+      return [
+        'enabled' => FALSE,
+        'message' => "Unsupported integration type for Svix: {$type}",
+      ];
+    }
+
+    $svixStatus = $this->getConfigurationStatus();
+    if (!$svixStatus['configured']) {
+      return [
+        'enabled' => FALSE,
+        'message' => $svixStatus['message'],
+      ];
+    }
+
+    if ($config->getSourceId() === NULL) {
+      return [
+        'enabled' => FALSE,
+        'message' => "Cannot connect to Svix. Set the '{$config->getSourceIdSetting()}' setting.",
+      ];
+    }
+
+    return [
+      'enabled' => TRUE,
+      'message' => 'Connected to Svix',
+    ];
+  }
+
+  /**
+   * Get the Svix ingest URL for an integration.
+   *
+   * @param string $type
+   *   The integration name, e.g. 'Impact Stack'.
+   *
+   * @return string|null
+   *   The ingest URL, or NULL if it cannot be determined.
+   */
+  public function getIngestUrlForType(string $type): ?string {
+    $config = SvixIntegrationConfig::fromType($type);
+    $sourceId = $config?->getSourceId();
+    if ($sourceId === NULL) {
+      return NULL;
+    }
+
+    try {
+      return (new \CRM_Svixclient_Client())->getIngestUrl($sourceId);
+    }
+    catch (\Exception $e) {
+      \Civi::log()->warning('Could not resolve Svix ingest URL', [
+        'type' => $type,
+        'error' => $e->getMessage(),
+      ]);
+      return NULL;
+    }
+  }
+
+  /**
+   * Delete the Svix destination registered for a destination type.
+   *
+   * @param string $type
+   *   The integration name, e.g. 'Impact Stack'.
+   */
+  public function deleteDestinationForType(string $type): void {
+    $destination = $this->getDestinationForType($type);
+
+    if ($destination === NULL) {
+      \Civi::log()->debug('No Svix destination found for type', ['type' => $type]);
+      return;
+    }
+
+    $this->removeDestination($destination);
+
+    \Civi::log()->info('Svix destination deleted', [
+      'svix_destination_id' => $destination['svix_destination_id'],
+      'type' => $type,
+    ]);
+  }
+
+  /**
+   * Delete a destination record from Svix and from the database.
+   *
+   * @param array $destination
+   *   The stored destination record.
+   */
+  private function removeDestination(array $destination): void {
+    // Delete from Svix (ignore errors - destination may already be deleted).
+    try {
+      $client = new \CRM_Svixclient_Client();
+      $client->deleteDestination($destination['source_id'], $destination['svix_destination_id']);
+    }
+    catch (\Exception $e) {
+      \Civi::log()->warning('Failed to delete Svix destination from Svix API', [
+        'svix_destination_id' => $destination['svix_destination_id'],
+        'error' => $e->getMessage(),
+      ]);
+    }
+
+    SvixDestination::delete(FALSE)
+      ->addWhere('id', '=', $destination['id'])
+      ->execute();
+  }
+
+  /**
    * Check if Svix is configured with an API key.
    *
    * This checks if the basic Svix configuration (API key) is present,
@@ -255,7 +475,7 @@ class SvixWebhookMiddleware {
     $description = str_replace('{value}', $routingValue, $config->getDescriptionTemplate());
 
     // Disable any existing destinations for this URL and routing value.
-    $client = new \CRM_Svixclient_Client();
+    $client = $this->createClient();
     $this->disableExistingDestinations($client, $sourceId, $webhookUrl, $description, $paymentProcessorId);
 
     // Create new destination.
@@ -266,13 +486,80 @@ class SvixWebhookMiddleware {
       $filter,
       $description,
       $routingValue,
+      $processorType,
       $paymentProcessorId,
       $contactId
     );
   }
 
   /**
-   * Find and disable existing destinations with the same URL and description.
+   * Register a Svix destination for a non-payment-processor integration.
+   *
+   * @param string $type
+   *   The integration name, e.g. 'Impact Stack'.
+   * @param int|null $contactId
+   *   Optional contact ID of who created this destination.
+   *
+   * @return string
+   *   The Svix destination ID.
+   *
+   * @throws \CRM_Core_Exception
+   *   If the integration is not supported or destination creation fails.
+   */
+  public function registerIntegrationDestination(string $type, ?int $contactId = NULL): string {
+    $config = SvixIntegrationConfig::fromType($type);
+    if ($config === NULL) {
+      throw new \CRM_Core_Exception("Unsupported integration type for Svix: {$type}");
+    }
+
+    $sourceId = $config->getSourceId();
+    if ($sourceId === NULL) {
+      throw new \CRM_Core_Exception("Svix source ID not configured for {$type}. Set the '{$config->getSourceIdSetting()}' setting.");
+    }
+
+    $webhookUrl = $config->getWebhookUrl();
+    $previous = $this->getDestinationForType($type);
+
+    $description = str_replace('{value}', $webhookUrl, $config->getDescriptionTemplate());
+
+    $client = $this->createClient();
+
+    $destinationId = $this->createNewDestination(
+      $client,
+      $sourceId,
+      $webhookUrl,
+      NULL,
+      $description,
+      $webhookUrl,
+      $type,
+      NULL,
+      $contactId
+    );
+
+    $this->disableExistingDestinations($client, $sourceId, $webhookUrl, $description, NULL, $destinationId);
+
+    // The replacement is live, so the superseded record can now go.
+    if ($previous !== NULL) {
+      $this->removeDestination($previous);
+    }
+
+    return $destinationId;
+  }
+
+  /**
+   * Create a Svix client instance.
+   *
+   * Overridable so tests can supply a double.
+   *
+   * @return \CRM_Svixclient_Client
+   *   The Svix client.
+   */
+  protected function createClient(): \CRM_Svixclient_Client {
+    return new \CRM_Svixclient_Client();
+  }
+
+  /**
+   * Find and disable existing destinations with the same URL.
    *
    * Ensures only one destination per site URL and routing value. The
    * description embeds the routing value (e.g. the GoCardless organisation
@@ -288,21 +575,31 @@ class SvixWebhookMiddleware {
    *   The webhook URL to match.
    * @param string $description
    *   The destination description to match (routing value included).
-   * @param int $paymentProcessorId
+   * @param int|null $paymentProcessorId
    *   The payment processor being (re-)registered. Destinations recorded
    *   locally against a different processor are never disabled, even when
    *   URL and description match (e.g. the same sandbox organisation
    *   connected as both Live and Test in a dev environment).
+   *   NULL for integrations that are not tied to a payment processor: those
+   *   have a Svix source of their own, so every destination this lists
+   *   already belongs to them and there is no sibling to protect.
+   * @param string|null $keepDestinationId
+   *   A Svix destination ID to leave enabled. Set when the replacement has
+   *   already been created: it matches the same URL and description, so
+   *   without this it would disable itself.
    */
   private function disableExistingDestinations(
     \CRM_Svixclient_Client $client,
     string $sourceId,
     string $webhookUrl,
     string $description,
-    int $paymentProcessorId,
+    ?int $paymentProcessorId = NULL,
+    ?string $keepDestinationId = NULL,
   ): void {
     $destinations = $client->listDestinations($sourceId);
-    $otherProcessorDestinationIds = $this->getOtherProcessorDestinationIds($paymentProcessorId);
+    $otherProcessorDestinationIds = $paymentProcessorId === NULL
+      ? []
+      : $this->getOtherProcessorDestinationIds($paymentProcessorId);
 
     \Civi::log()->debug('Checking for existing destinations to disable', [
       'source_id' => $sourceId,
@@ -312,6 +609,10 @@ class SvixWebhookMiddleware {
     ]);
 
     foreach ($destinations as $dest) {
+      if ($keepDestinationId !== NULL && ($dest['id'] ?? '') === $keepDestinationId) {
+        continue;
+      }
+
       // Check if URL matches (normalize by removing trailing ? or /).
       $destUrl = rtrim($dest['url'] ?? '', '?/');
       $compareUrl = rtrim($webhookUrl, '?/');
@@ -382,9 +683,13 @@ class SvixWebhookMiddleware {
    * @param string $description
    *   The destination description (routing value included).
    * @param string $routingValue
-   *   The routing value.
-   * @param int $paymentProcessorId
-   *   The CiviCRM payment processor ID.
+   *   The routing value, used to build the destination description.
+   * @param string $type
+   *   The destination type: a payment processor type name, or an integration
+   *   name such as 'Impact Stack'.
+   * @param int|null $paymentProcessorId
+   *   The CiviCRM payment processor ID, or NULL for integrations that are not
+   *   tied to a payment processor.
    * @param int|null $contactId
    *   Optional contact ID.
    *
@@ -395,17 +700,21 @@ class SvixWebhookMiddleware {
     \CRM_Svixclient_Client $client,
     string $sourceId,
     string $webhookUrl,
-    string $filter,
+    ?string $filter,
     string $description,
     string $routingValue,
-    int $paymentProcessorId,
+    string $type,
+    ?int $paymentProcessorId,
     ?int $contactId,
   ): string {
     // Create destination via Svix client.
     $destination = $client->createDestination($sourceId, $webhookUrl, $description);
 
-    // Set the transformation (filter).
-    $client->setTransformation($sourceId, $destination['id'], $filter);
+    // Set the transformation (filter). Integrations with a dedicated source
+    // receive every event from that source, so they have no filter.
+    if ($filter !== NULL) {
+      $client->setTransformation($sourceId, $destination['id'], $filter);
+    }
 
     // Get the signing secret.
     $signingSecret = $client->getDestinationSecret($sourceId, $destination['id']);
@@ -415,7 +724,11 @@ class SvixWebhookMiddleware {
       ->addValue('source_id', $sourceId)
       ->addValue('svix_destination_id', $destination['id'])
       ->addValue('signing_secret', $signingSecret)
-      ->addValue('payment_processor_id', $paymentProcessorId);
+      ->addValue('type', $type);
+
+    if ($paymentProcessorId !== NULL) {
+      $createAction->addValue('payment_processor_id', $paymentProcessorId);
+    }
 
     $createdBy = $contactId ?? \CRM_Core_Session::getLoggedInContactID();
     if ($createdBy !== NULL) {
@@ -426,6 +739,7 @@ class SvixWebhookMiddleware {
 
     \Civi::log()->info('Svix destination registered', [
       'routing_value' => $routingValue,
+      'type' => $type,
       'svix_destination_id' => $destination['id'],
       'payment_processor_id' => $paymentProcessorId,
     ]);
@@ -455,22 +769,7 @@ class SvixWebhookMiddleware {
       return;
     }
 
-    // Delete from Svix (ignore errors - destination may already be deleted).
-    try {
-      $client = new \CRM_Svixclient_Client();
-      $client->deleteDestination($destination['source_id'], $destination['svix_destination_id']);
-    }
-    catch (\Exception $e) {
-      \Civi::log()->warning('Failed to delete Svix destination from Svix API', [
-        'svix_destination_id' => $destination['svix_destination_id'],
-        'error' => $e->getMessage(),
-      ]);
-    }
-
-    // Delete from database.
-    SvixDestination::delete(FALSE)
-      ->addWhere('id', '=', $destination['id'])
-      ->execute();
+    $this->removeDestination($destination);
 
     \Civi::log()->info('Svix destination deleted', [
       'svix_destination_id' => $destination['svix_destination_id'],

@@ -2,7 +2,7 @@
 <extension key="io.compuco.svixclient" type="module">
   <file>svixclient</file>
   <name>Svix Client</name>
-  <description>CiviCRM Svix webhook client for payment extensions (Stripe, GoCardless) to register webhook destinations.</description>
+  <description>CiviCRM Svix webhook client for payment extensions (Stripe, GoCardless) and other integrations (Impact Stack) etc to register webhook destinations.</description>
   <license>AGPL-3.0</license>
   <authors>
     <author>
@@ -32,7 +32,7 @@
     <comments>Listed versions. For example, specify both "4" and "5".</comments>
     <ver>5</ver>
   </smarty_compatibility>
-  <comments>Svix webhook client for CiviCRM payment processors</comments>
+  <comments>Svix webhook client for CiviCRM payment processors and other integrations</comments>
   <classloader>
     <psr0 prefix="CRM_" path="."/>
     <psr4 prefix="Civi\" path="Civi"/>

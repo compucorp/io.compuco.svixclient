@@ -8,7 +8,7 @@ use CRM_Svixclient_ExtensionUtil as E;
 return [
   'type' => 'search',
   'title' => E::ts('Svix Destinations'),
-  'description' => E::ts('View Svix webhook destinations configured for payment processors'),
+  'description' => E::ts('View Svix webhook destinations configured for payment processors and other integrations'),
   'server_route' => 'civicrm/admin/svix/destinations',
   'permission' => [
     'administer CiviCRM',

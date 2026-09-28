@@ -77,10 +77,10 @@ return [
           'version' => 4,
           'select' => [
             'id',
+            'type',
             'source_id',
             'svix_destination_id',
             'payment_processor_id.name',
-            'payment_processor_id.payment_processor_type_id:label',
             'created_by.display_name',
             'created_date',
           ],
@@ -109,7 +109,7 @@ return [
         'saved_search_id.name' => 'SvixDestinations',
         'type' => 'table',
         'settings' => [
-          'description' => E::ts('View Svix webhook destinations configured for payment processors'),
+          'description' => E::ts('View Svix webhook destinations configured for payment processors and other integrations'),
           'sort' => [
             ['created_date', 'DESC'],
           ],
@@ -129,17 +129,18 @@ return [
             ],
             [
               'type' => 'field',
-              'key' => 'payment_processor_id.name',
+              'key' => 'type',
               'dataType' => 'String',
-              'label' => E::ts('Payment Processor'),
+              'label' => E::ts('Type'),
               'sortable' => TRUE,
             ],
             [
               'type' => 'field',
-              'key' => 'payment_processor_id.payment_processor_type_id:label',
+              'key' => 'payment_processor_id.name',
               'dataType' => 'String',
-              'label' => E::ts('Type'),
+              'label' => E::ts('Payment Processor'),
               'sortable' => TRUE,
+              'empty_value' => E::ts('(none)'),
             ],
             [
               'type' => 'field',

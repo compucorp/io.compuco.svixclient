@@ -11,7 +11,9 @@ See [README.md](README.md) for full documentation including:
 - Adding new payment processors
 - Multi-site support
 
-**Quick Summary:** CiviCRM extension providing Svix webhook client for payment extensions (Stripe, GoCardless). Enables 100+ sites to share a single Svix Ingest account.
+**Quick Summary:** CiviCRM extension providing Svix webhook client for payment extensions (Stripe, GoCardless) and other integrations (Impact Stack). Enables 100+ sites to share a single Svix Ingest account.
+
+**Two delivery models:** payment processors share one Svix source and route with a JS transformation on a routing key; other integrations like Impact Stack get a dedicated source per site and need no routing key. Every `civicrm_svix_destination` row records its integration in the required `type` column; `payment_processor_id` is nullable and only set for payment processors.
 
 ## Build & Development Commands
 
@@ -38,6 +40,7 @@ cv ext:enable io.compuco.svixclient
 |-----------|----------|
 | Middleware Service | `Civi/Svixclient/Service/SvixWebhookMiddleware.php` |
 | Processor Config | `Civi/Svixclient/Enum/SvixProcessorConfig.php` |
+| Integration Config | `Civi/Svixclient/Enum/SvixIntegrationConfig.php` |
 | Low-Level Client | `CRM/Svixclient/Client.php` |
 | Filter Strategy | `Civi/Svixclient/Filter/` |
 | Entity Schema | `schema/SvixDestination.entityType.php` |
