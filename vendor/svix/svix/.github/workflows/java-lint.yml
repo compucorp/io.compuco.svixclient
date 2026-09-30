@@ -1,0 +1,28 @@
+name: Java Lint
+on:
+  workflow_call:
+
+jobs:
+  dotnet:
+    name: Java Lint
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        java-version: ["8", "11"]
+        include:
+          - java-version: "8"
+            args: "-x :compileJava11Java -x :processJava11Resources -x :java11Classes"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java-version }}
+
+      - name: Build
+        run: |
+          cd java
+          ./gradlew build ${{ matrix.args }}
