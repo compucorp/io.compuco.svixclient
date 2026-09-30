@@ -1,6 +1,15 @@
 # CiviCRM Svix Client
 
-A CiviCRM extension that provides a Svix webhook client for payment extensions (Stripe, GoCardless) to register webhook destinations without credentials in environment variables.
+A CiviCRM extension that provides a Svix webhook client for payment extensions (Stripe, GoCardless) and other integrations (Impact Stack) to register webhook destinations without credentials in environment variables.
+
+Two delivery models are supported:
+
+| Model | Source | Routing | Used by |
+|-------|--------|---------|---------|
+| **Shared source** | One Svix source shared by multiple sites | A JavaScript transformation filters on a routing key, so a site only processes its own events | Payment processors (Stripe Connect, GoCardless) |
+| **Dedicated source** | One Svix source per site | None - the source delivers to exactly one destination | Other integrations (Impact Stack) |
+
+Every destination row records which integration it belongs to in its `type` column (`Stripe Connect`, `GoCardless`, `Impact Stack`, ...). `payment_processor_id` is only populated for the payment processor model.
 
 This is an [extension for CiviCRM](https://docs.civicrm.org/sysadmin/en/latest/customize/extensions/), licensed under [AGPL-3.0](LICENSE.txt).
 
@@ -91,6 +100,9 @@ $civicrm_setting['Svix']['svix_api_key'] = 'sk_your_svix_api_key';
 // Source IDs (one per payment provider, shared across all sites)
 $civicrm_setting['Svix']['svix_source_stripe_connect'] = 'src_stripe_xxx';
 $civicrm_setting['Svix']['svix_source_gocardless'] = 'src_gocardless_xxx';
+
+// Source IDs for integrations with a dedicated source (unique per site)
+$civicrm_setting['Svix']['svix_source_impact_stack'] = 'src_impact_stack_xxx';
 ```
 
 | Setting | Description |
@@ -99,6 +111,7 @@ $civicrm_setting['Svix']['svix_source_gocardless'] = 'src_gocardless_xxx';
 | `svix_api_key` | Your Svix API key. Can also be set via `SVIX_API_KEY` environment variable |
 | `svix_source_stripe_connect` | Svix source ID for Stripe Connect webhooks |
 | `svix_source_gocardless` | Svix source ID for GoCardless webhooks |
+| `svix_source_impact_stack` | Svix source ID for Impact Stack webhooks. Unlike the payment processor sources this is **unique per site** |
 
 **Important:** The signing secret for webhook verification is stored per-destination in the database (fetched automatically from Svix API when creating destinations).
 
@@ -164,6 +177,36 @@ if ($middleware->isSvixRequest()) {
 
     // Process the webhook...
 }
+```
+
+#### Registering a Destination for a Dedicated-Source Integration
+
+Integrations that have their own Svix source per site do not need a routing
+key, so they use `registerIntegrationDestination()` instead:
+
+```php
+$middleware = \Civi::service('svix.webhook_middleware');
+
+// Confirm the API key and the integration's source ID are both configured
+$status = $middleware->getIntegrationConfigurationStatus('Impact Stack');
+if (!$status['enabled']) {
+    throw new \Exception($status['message']);
+}
+
+// No routing value, no transformation - the source delivers here only
+$destinationId = $middleware->registerIntegrationDestination(
+    'Impact Stack',   // Integration name (must match SvixIntegrationConfig enum)
+    $contactId        // Optional: contact who created this
+);
+
+// Look-ups and teardown are by type
+$middleware->isEnabledForType('Impact Stack');
+$middleware->getSecretForType('Impact Stack');
+$middleware->getIngestUrlForType('Impact Stack');
+$middleware->deleteDestinationForType('Impact Stack');
+
+// Verification uses the type instead of a processor type
+$result = $middleware->verifyForType($payload, 'Impact Stack');
 ```
 
 #### Checking Configuration Status
@@ -373,7 +416,8 @@ View configured Svix destinations via the CiviCRM admin menu:
 
 This SearchKit-based view displays:
 - Destination ID
-- Payment Processor name and type
+- Type (the integration the destination belongs to)
+- Payment Processor name (blank for integrations that are not payment processors)
 - Svix Source ID and Destination ID
 - Created by and creation date
 
@@ -401,6 +445,25 @@ To add support for a new payment processor:
 4. **Configure the source ID** in `civicrm.settings.php`:
    ```php
    $civicrm_setting['Svix']['svix_source_new_processor'] = 'src_xxx';
+   ```
+
+## Adding New Integrations (Dedicated Source)
+
+To add an integration that has its own Svix source per site:
+
+1. **Add case to SvixIntegrationConfig enum** (`Civi/Svixclient/Enum/SvixIntegrationConfig.php`):
+   ```php
+   case NewIntegration = 'New Integration';
+   ```
+
+2. **Add match arms** for the new integration:
+   - `getSourceIdSetting()` - Setting name (e.g., 'svix_source_new_integration')
+   - `getWebhookPath()` - CiviCRM path that receives the webhook
+   - `getDescriptionTemplate()` - Template with `{value}` placeholder
+
+3. **Configure the source ID** in `civicrm.settings.php` **on each site**:
+   ```php
+   $civicrm_setting['Svix']['svix_source_new_integration'] = 'src_xxx';
    ```
 
 ## Multi-Site Support

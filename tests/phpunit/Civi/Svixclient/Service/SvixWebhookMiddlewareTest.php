@@ -4,6 +4,7 @@ namespace Civi\Svixclient\Service;
 
 use Civi\Api4\PaymentProcessor;
 use Civi\Api4\SvixDestination;
+use Civi\Svixclient\Enum\SvixIntegrationConfig;
 
 /**
  * Tests for the SvixWebhookMiddleware class.
@@ -20,11 +21,59 @@ class SvixWebhookMiddlewareTest extends \BaseHeadlessTest {
   private SvixWebhookMiddleware $middleware;
 
   /**
+   * The mandatory settings that were configured before this test ran.
+   *
+   * @var array|null
+   */
+  private ?array $originalMandatorySettings = NULL;
+
+  /**
    * {@inheritdoc}
    */
-  protected function setUp(): void {
+  public function setUp(): void {
     parent::setUp();
     $this->middleware = new SvixWebhookMiddleware();
+    $this->originalMandatorySettings = $GLOBALS['civicrm_setting'] ?? NULL;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  protected function tearDown(): void {
+    $this->setMandatorySettings($this->originalMandatorySettings);
+    parent::tearDown();
+  }
+
+  /**
+   * Replaces the mandatory settings and reloads them into the settings bag.
+   *
+   * @param array|null $settings
+   *   The full mandatory settings array, or NULL to unset it.
+   */
+  private function setMandatorySettings(?array $settings): void {
+    if ($settings === NULL) {
+      unset($GLOBALS['civicrm_setting']);
+    }
+    else {
+      $GLOBALS['civicrm_setting'] = $settings;
+    }
+
+    \Civi::service('settings_manager')->useMandatory();
+  }
+
+  /**
+   * Configures Svix settings as mandatory settings.
+   *
+   * @param array<string,string> $values
+   *   The Svix setting values, keyed by setting name.
+   */
+  private function setSvixSettings(array $values): void {
+    $settings = $this->originalMandatorySettings ?? [];
+    foreach ($values as $name => $value) {
+      $settings['Svix'][$name] = $value;
+    }
+
+    $this->setMandatorySettings($settings);
   }
 
   /**
@@ -240,6 +289,282 @@ class SvixWebhookMiddlewareTest extends \BaseHeadlessTest {
   }
 
   /**
+   * Test registerIntegrationDestination throws for an unknown integration.
+   */
+  public function testRegisterIntegrationDestinationThrowsForUnknownType(): void {
+    $this->expectException(\CRM_Core_Exception::class);
+    $this->expectExceptionMessage('Unsupported integration type for Svix');
+
+    $this->middleware->registerIntegrationDestination('Not An Integration');
+  }
+
+  /**
+   * Test registerIntegrationDestination throws when the source is unset.
+   */
+  public function testRegisterIntegrationDestinationThrowsWhenSourceIdNotConfigured(): void {
+    $this->setSvixSettings(['svix_source_impact_stack' => '']);
+
+    $this->expectException(\CRM_Core_Exception::class);
+    $this->expectExceptionMessage('Svix source ID not configured');
+
+    $this->middleware->registerIntegrationDestination('Impact Stack');
+  }
+
+  /**
+   * Test type look-ups return nothing when no destination is registered.
+   */
+  public function testTypeLookupsReturnNothingWhenNotRegistered(): void {
+    $this->assertNull($this->middleware->getDestinationForType('Impact Stack'));
+    $this->assertNull($this->middleware->getSecretForType('Impact Stack'));
+    $this->assertFalse($this->middleware->isEnabledForType('Impact Stack'));
+  }
+
+  /**
+   * Test type look-ups find a destination that has no payment processor.
+   */
+  public function testTypeLookupsFindDestinationWithoutPaymentProcessor(): void {
+    SvixDestination::create(FALSE)
+      ->addValue('source_id', 'src_impact_stack_lookup')
+      ->addValue('svix_destination_id', 'dest_impact_stack_lookup')
+      ->addValue('type', 'Impact Stack')
+      ->addValue('signing_secret', 'whsec_impact_stack')
+      ->execute();
+
+    $destination = $this->middleware->getDestinationForType('Impact Stack');
+
+    $this->assertNotNull($destination);
+    $this->assertEquals('dest_impact_stack_lookup', $destination['svix_destination_id']);
+    $this->assertEquals('whsec_impact_stack', $this->middleware->getSecretForType('Impact Stack'));
+    $this->assertTrue($this->middleware->isEnabledForType('Impact Stack'));
+  }
+
+  /**
+   * Test verifyForType reports a missing destination rather than throwing.
+   */
+  public function testVerifyForTypeReturnsErrorWithNoSecret(): void {
+    $result = $this->middleware->verifyForType('{"test": "data"}', 'Impact Stack', [
+      'svix-id' => 'msg_test',
+      'svix-timestamp' => '1234567890',
+      'svix-signature' => 'v1,test_sig',
+    ]);
+
+    $this->assertFalse($result['valid']);
+    $this->assertStringContainsString('No Svix destination configured for type', $result['error']);
+  }
+
+  /**
+   * Test getIntegrationConfigurationStatus rejects an unknown integration.
+   */
+  public function testGetIntegrationConfigurationStatusForUnknownType(): void {
+    $status = $this->middleware->getIntegrationConfigurationStatus('Not An Integration');
+
+    $this->assertFalse($status['enabled']);
+    $this->assertStringContainsString('Unsupported integration type', $status['message']);
+  }
+
+  /**
+   * Test getIntegrationConfigurationStatus reports a missing source ID.
+   */
+  public function testGetIntegrationConfigurationStatusWithoutSourceId(): void {
+    $this->setSvixSettings([
+      'svix_api_key' => 'sk_test_key',
+      'svix_source_impact_stack' => '',
+    ]);
+
+    $status = $this->middleware->getIntegrationConfigurationStatus('Impact Stack');
+
+    $this->assertFalse($status['enabled']);
+    $this->assertStringContainsString('svix_source_impact_stack', $status['message']);
+  }
+
+  /**
+   * Test getIntegrationConfigurationStatus passes when fully configured.
+   */
+  public function testGetIntegrationConfigurationStatusWhenConfigured(): void {
+    $this->setSvixSettings([
+      'svix_api_key' => 'sk_test_key',
+      'svix_source_impact_stack' => 'src_impact_stack_123',
+    ]);
+
+    $status = $this->middleware->getIntegrationConfigurationStatus('Impact Stack');
+
+    $this->assertTrue($status['enabled']);
+  }
+
+  /**
+   * Test getIngestUrlForType returns NULL when no source is configured.
+   */
+  public function testGetIngestUrlForTypeReturnsNullWithoutSourceId(): void {
+    $this->setSvixSettings(['svix_source_impact_stack' => '']);
+
+    $this->assertNull($this->middleware->getIngestUrlForType('Impact Stack'));
+  }
+
+  /**
+   * Test a successful integration registration stores the destination.
+   */
+  public function testRegisterIntegrationDestinationStoresDestinationWithoutFilter(): void {
+    $this->setSvixSettings([
+      'svix_api_key' => 'sk_test_key',
+      'svix_source_impact_stack' => 'src_is',
+    ]);
+
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->method('createDestination')->willReturn(['id' => 'ep_new']);
+    $client->method('getDestinationSecret')->willReturn('whsec_new');
+    $client->method('listDestinations')->willReturn([]);
+    $client->expects($this->never())->method('setTransformation');
+
+    $middleware = $this->middlewareWithClient($client);
+
+    $this->assertSame('ep_new', $middleware->registerIntegrationDestination('Impact Stack'));
+
+    $stored = $middleware->getDestinationForType('Impact Stack');
+    $this->assertNotNull($stored);
+    $this->assertSame('ep_new', $stored['svix_destination_id']);
+    $this->assertSame('whsec_new', $stored['signing_secret']);
+    $this->assertNull($stored['payment_processor_id']);
+  }
+
+  /**
+   * Test re-registering replaces the previous destination record.
+   */
+  public function testRegisterIntegrationDestinationReplacesPreviousRecord(): void {
+    $this->setSvixSettings([
+      'svix_api_key' => 'sk_test_key',
+      'svix_source_impact_stack' => 'src_is',
+    ]);
+
+    SvixDestination::create(FALSE)
+      ->addValue('source_id', 'src_is')
+      ->addValue('svix_destination_id', 'ep_old')
+      ->addValue('type', 'Impact Stack')
+      ->addValue('signing_secret', 'whsec_old')
+      ->execute();
+
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->method('createDestination')->willReturn(['id' => 'ep_new']);
+    $client->method('getDestinationSecret')->willReturn('whsec_new');
+    $client->method('listDestinations')->willReturn([]);
+
+    $middleware = $this->middlewareWithClient($client);
+    $middleware->registerIntegrationDestination('Impact Stack');
+
+    $remaining = SvixDestination::get(FALSE)
+      ->addWhere('type', '=', 'Impact Stack')
+      ->execute();
+
+    $this->assertCount(1, $remaining);
+    $this->assertSame('ep_new', $remaining->first()['svix_destination_id']);
+  }
+
+  /**
+   * Test the replacement destination is never disabled by its own clean-up.
+   */
+  public function testRegisterIntegrationDestinationDoesNotDisableItsReplacement(): void {
+    $this->setSvixSettings([
+      'svix_api_key' => 'sk_test_key',
+      'svix_source_impact_stack' => 'src_is',
+    ]);
+
+    $webhookUrl = SvixIntegrationConfig::ImpactStack->getWebhookUrl();
+    $description = 'CiviCRM Impact Stack - ' . $webhookUrl;
+
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->method('createDestination')->willReturn(['id' => 'ep_new']);
+    $client->method('getDestinationSecret')->willReturn('whsec_new');
+    $client->method('listDestinations')->willReturn([
+      ['id' => 'ep_stale', 'url' => $webhookUrl, 'description' => $description, 'disabled' => FALSE],
+      ['id' => 'ep_new', 'url' => $webhookUrl, 'description' => $description, 'disabled' => FALSE],
+    ]);
+
+    // Only the orphan is stood down; the replacement stays enabled.
+    $client->expects($this->once())
+      ->method('disableDestination')
+      ->with('src_is', 'ep_stale');
+
+    $this->middlewareWithClient($client)->registerIntegrationDestination('Impact Stack');
+  }
+
+  /**
+   * Test a failed creation leaves the live destination alone.
+   */
+  public function testFailedIntegrationRegistrationLeavesPreviousDestinationIntact(): void {
+    $this->setSvixSettings([
+      'svix_api_key' => 'sk_test_key',
+      'svix_source_impact_stack' => 'src_is',
+    ]);
+
+    SvixDestination::create(FALSE)
+      ->addValue('source_id', 'src_is')
+      ->addValue('svix_destination_id', 'ep_old')
+      ->addValue('type', 'Impact Stack')
+      ->addValue('signing_secret', 'whsec_old')
+      ->execute();
+
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->method('createDestination')
+      ->willThrowException(new \CRM_Core_Exception('Svix API error (500)'));
+    $client->expects($this->never())->method('disableDestination');
+    $client->expects($this->never())->method('deleteDestination');
+
+    $middleware = $this->middlewareWithClient($client);
+
+    try {
+      $middleware->registerIntegrationDestination('Impact Stack');
+      $this->fail('Expected the registration to propagate the client failure.');
+    }
+    catch (\CRM_Core_Exception $e) {
+      // Expected.
+    }
+
+    $stored = $middleware->getDestinationForType('Impact Stack');
+    $this->assertNotNull($stored, 'The previous destination record must survive.');
+    $this->assertSame('ep_old', $stored['svix_destination_id']);
+  }
+
+  /**
+   * Builds a middleware whose Svix client is the given double.
+   *
+   * @param \CRM_Svixclient_Client $client
+   *   The client double to use.
+   *
+   * @return \Civi\Svixclient\Service\SvixWebhookMiddleware
+   *   The middleware under test.
+   */
+  private function middlewareWithClient(\CRM_Svixclient_Client $client): SvixWebhookMiddleware {
+    return new class($client) extends SvixWebhookMiddleware {
+
+      /**
+       * @var \CRM_Svixclient_Client
+       */
+      private \CRM_Svixclient_Client $testClient;
+
+      public function __construct(\CRM_Svixclient_Client $client) {
+        $this->testClient = $client;
+      }
+
+      /**
+       * @return \CRM_Svixclient_Client
+       *   The svix client.
+       */
+      protected function createClient(): \CRM_Svixclient_Client {
+        return $this->testClient;
+      }
+
+    };
+  }
+
+  /**
+   * Test deleteDestinationForType is a no-op when nothing is registered.
+   */
+  public function testDeleteDestinationForTypeHandlesMissingDestination(): void {
+    $this->middleware->deleteDestinationForType('Impact Stack');
+
+    $this->assertFalse($this->middleware->isEnabledForType('Impact Stack'));
+  }
+
+  /**
    * Test deleteDestination handles gracefully when no destination exists.
    */
   public function testDeleteDestinationHandlesNoDestinationGracefully(): void {
@@ -391,11 +716,13 @@ class SvixWebhookMiddlewareTest extends \BaseHeadlessTest {
     SvixDestination::create(FALSE)
       ->addValue('source_id', 'src_123')
       ->addValue('svix_destination_id', 'ep_live')
+      ->addValue('type', 'GoCardless')
       ->addValue('payment_processor_id', $liveProcessor['id'])
       ->execute();
     SvixDestination::create(FALSE)
       ->addValue('source_id', 'src_123')
       ->addValue('svix_destination_id', 'ep_test')
+      ->addValue('type', 'GoCardless')
       ->addValue('payment_processor_id', $testProcessor['id'])
       ->execute();
 

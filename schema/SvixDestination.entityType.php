@@ -8,7 +8,7 @@ return [
   'getInfo' => fn() => [
     'title' => E::ts('Svix Destination'),
     'title_plural' => E::ts('Svix Destinations'),
-    'description' => E::ts('Stores Svix webhook destination configurations for payment processors'),
+    'description' => E::ts('Stores Svix webhook destination configurations for payment processors and other integrations'),
     'log' => TRUE,
   ],
   'getFields' => fn() => [
@@ -35,12 +35,19 @@ return [
       'required' => TRUE,
       'description' => E::ts('Svix destination ID returned from API'),
     ],
+    'type' => [
+      'title' => E::ts('Type'),
+      'sql_type' => 'varchar(255)',
+      'input_type' => 'Text',
+      'required' => TRUE,
+      'description' => E::ts('The integration this destination belongs to. For payment processors this is the payment processor type name (e.g. "Stripe Connect"); for other integrations it is the integration name (e.g. "Impact Stack").'),
+    ],
     'payment_processor_id' => [
       'title' => E::ts('Payment Processor ID'),
       'sql_type' => 'int unsigned',
       'input_type' => 'EntityRef',
-      'required' => TRUE,
-      'description' => E::ts('FK to Payment Processor'),
+      'required' => FALSE,
+      'description' => E::ts('FK to Payment Processor. Only set for payment processor integrations; NULL for other integration types.'),
       'entity_reference' => [
         'entity' => 'PaymentProcessor',
         'key' => 'id',
@@ -86,6 +93,11 @@ return [
     'index_payment_processor_id' => [
       'fields' => [
         'payment_processor_id' => TRUE,
+      ],
+    ],
+    'index_type' => [
+      'fields' => [
+        'type' => TRUE,
       ],
     ],
   ],

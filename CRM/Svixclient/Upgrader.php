@@ -1,6 +1,5 @@
 <?php
 declare(strict_types = 1);
-use CRM_Svixclient_ExtensionUtil as E;
 
 /**
  * Collection of upgrade steps.
@@ -11,128 +10,68 @@ final class CRM_Svixclient_Upgrader extends \CRM_Extension_Upgrader_Base {
   // upgrade tasks. They are executed in order (like Drupal's hook_update_N).
 
   /**
-   * Example: Run an external SQL script when the module is installed.
+   * Fallback type for destinations whose payment processor can't be resolved.
+   */
+  private const FALLBACK_TYPE = 'Unknown';
+
+  /**
+   * Support destinations that do not belong to a payment processor.
    *
-   * Note that if a file is present sql\auto_install that will run regardless of this hook.
-   */
-  // public function install(): void {
-  //   $this->executeSqlFile('sql/my_install.sql');
-  // }
-
-  /**
-   * Example: Work with entities usually not available during the install step.
+   * @return bool
+   *   TRUE on success.
    *
-   * This method can be used for any post-install tasks. For example, if a step
-   * of your installation depends on accessing an entity that is itself
-   * created during the installation (e.g., a setting or a managed entity), do
-   * so here to avoid order of operation problems.
-   */
-  // public function postInstall(): void {
-  //  $customFieldId = civicrm_api3('CustomField', 'getvalue', array(
-  //    'return' => array("id"),
-  //    'name' => "customFieldCreatedViaManagedHook",
-  //  ));
-  //  civicrm_api3('Setting', 'create', array(
-  //    'myWeirdFieldSetting' => array('id' => $customFieldId, 'weirdness' => 1),
-  //  ));
-  // }
-
-  /**
-   * Example: Run an external SQL script when the module is uninstalled.
-   *
-   * Note that if a file is present sql\auto_uninstall that will run regardless of this hook.
-   */
-  // public function uninstall(): void {
-  //   $this->executeSqlFile('sql/my_uninstall.sql');
-  // }
-
-  /**
-   * Example: Run a simple query when a module is enabled.
-   */
-  // public function enable(): void {
-  //  CRM_Core_DAO::executeQuery('UPDATE foo SET is_active = 1 WHERE bar = "whiz"');
-  // }
-
-  /**
-   * Example: Run a simple query when a module is disabled.
-   */
-  // public function disable(): void {
-  //   CRM_Core_DAO::executeQuery('UPDATE foo SET is_active = 0 WHERE bar = "whiz"');
-  // }
-
-  /**
-   * Example: Run a couple simple queries.
-   *
-   * @return TRUE on success
    * @throws CRM_Core_Exception
    */
-  // public function upgrade_4200(): bool {
-  //   $this->ctx->log->info('Applying update 4200');
-  //   CRM_Core_DAO::executeQuery('UPDATE foo SET bar = "whiz"');
-  //   CRM_Core_DAO::executeQuery('DELETE FROM bang WHERE willy = wonka(2)');
-  //   return TRUE;
-  // }
+  public function upgrade_1001(): bool {
+    $this->ctx->log->info('Applying update 1001 - add type column to civicrm_svix_destination');
+    $table = 'civicrm_svix_destination';
+
+    if (!CRM_Core_BAO_SchemaHandler::checkIfFieldExists($table, 'type')) {
+      CRM_Core_DAO::executeQuery(
+        "ALTER TABLE `{$table}`
+         ADD COLUMN `type` varchar(255) NULL COMMENT 'The integration this destination belongs to. For payment processors this is the payment processor type name (e.g. \"Stripe Connect\"); for other integrations it is the integration name (e.g. \"Impact Stack\").'
+         AFTER `svix_destination_id`"
+      );
+    }
+
+    $this->backfillType($table);
+
+    CRM_Core_DAO::executeQuery(
+      "ALTER TABLE `{$table}`
+       MODIFY `type` varchar(255) NOT NULL COMMENT 'The integration this destination belongs to. For payment processors this is the payment processor type name (e.g. \"Stripe Connect\"); for other integrations it is the integration name (e.g. \"Impact Stack\").'"
+    );
+
+    if (!CRM_Core_BAO_SchemaHandler::checkIfIndexExists($table, 'index_type')) {
+      CRM_Core_DAO::executeQuery("CREATE INDEX `index_type` ON `{$table}` (`type`)");
+    }
+
+    CRM_Core_DAO::executeQuery(
+      "ALTER TABLE `{$table}`
+       MODIFY `payment_processor_id` int unsigned NULL COMMENT 'FK to Payment Processor. Only set for payment processor integrations; NULL for other integration types.'"
+    );
+
+    return TRUE;
+  }
 
   /**
-   * Example: Run an external SQL script.
+   * Populates `type` for rows that do not have a value yet.
    *
-   * @return TRUE on success
-   * @throws CRM_Core_Exception
+   * @param string $table
+   *   The destination table name.
    */
-  // public function upgrade_4201(): bool {
-  //   $this->ctx->log->info('Applying update 4201');
-  //   // this path is relative to the extension base dir
-  //   $this->executeSqlFile('sql/upgrade_4201.sql');
-  //   return TRUE;
-  // }
+  private function backfillType(string $table): void {
+    CRM_Core_DAO::executeQuery(
+      "UPDATE `{$table}` sd
+       INNER JOIN `civicrm_payment_processor` pp ON pp.id = sd.payment_processor_id
+       INNER JOIN `civicrm_payment_processor_type` ppt ON ppt.id = pp.payment_processor_type_id
+       SET sd.`type` = ppt.name
+       WHERE sd.`type` IS NULL OR sd.`type` = ''"
+    );
 
-  /**
-   * Example: Run a slow upgrade process by breaking it up into smaller chunk.
-   *
-   * @return TRUE on success
-   * @throws CRM_Core_Exception
-   */
-  // public function upgrade_4202(): bool {
-  //   $this->ctx->log->info('Planning update 4202'); // PEAR Log interface
-
-  //   $this->addTask(E::ts('Process first step'), 'processPart1', $arg1, $arg2);
-  //   $this->addTask(E::ts('Process second step'), 'processPart2', $arg3, $arg4);
-  //   $this->addTask(E::ts('Process second step'), 'processPart3', $arg5);
-  //   return TRUE;
-  // }
-  // public function processPart1($arg1, $arg2) { sleep(10); return TRUE; }
-  // public function processPart2($arg3, $arg4) { sleep(10); return TRUE; }
-  // public function processPart3($arg5) { sleep(10); return TRUE; }
-
-  /**
-   * Example: Run an upgrade with a query that touches many (potentially
-   * millions) of records by breaking it up into smaller chunks.
-   *
-   * @return TRUE on success
-   * @throws CRM_Core_Exception
-   */
-  // public function upgrade_4203(): bool {
-  //   $this->ctx->log->info('Planning update 4203'); // PEAR Log interface
-
-  //   $minId = CRM_Core_DAO::singleValueQuery('SELECT coalesce(min(id),0) FROM civicrm_contribution');
-  //   $maxId = CRM_Core_DAO::singleValueQuery('SELECT coalesce(max(id),0) FROM civicrm_contribution');
-  //   for ($startId = $minId; $startId <= $maxId; $startId += self::BATCH_SIZE) {
-  //     $endId = $startId + self::BATCH_SIZE - 1;
-  //     $title = E::ts('Upgrade Batch (%1 => %2)', array(
-  //       1 => $startId,
-  //       2 => $endId,
-  //     ));
-  //     $sql = '
-  //       UPDATE civicrm_contribution SET foobar = apple(banana()+durian)
-  //       WHERE id BETWEEN %1 and %2
-  //     ';
-  //     $params = array(
-  //       1 => array($startId, 'Integer'),
-  //       2 => array($endId, 'Integer'),
-  //     );
-  //     $this->addTask($title, 'executeSql', $sql, $params);
-  //   }
-  //   return TRUE;
-  // }
+    CRM_Core_DAO::executeQuery(
+      "UPDATE `{$table}` SET `type` = %1 WHERE `type` IS NULL OR `type` = ''",
+      [1 => [self::FALLBACK_TYPE, 'String']]
+    );
+  }
 
 }
