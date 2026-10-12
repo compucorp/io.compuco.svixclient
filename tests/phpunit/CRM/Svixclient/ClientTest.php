@@ -231,4 +231,128 @@ JS;
     $this->assertStringContainsString('input.custom_field', $js);
   }
 
+  /**
+   * Test createDestination omits throttleRate when none is given.
+   */
+  public function testCreateDestinationOmitsThrottleRateByDefault(): void {
+    $client = $this->createRecordingClient();
+
+    $client->createDestination('src_123', 'https://example.org/hook', 'Test destination');
+
+    $this->assertCount(1, $client->requests);
+    $this->assertSame('POST', $client->requests[0]['method']);
+    $this->assertSame('/ingest/api/v1/source/src_123/endpoint', $client->requests[0]['path']);
+    $this->assertSame(
+      ['url' => 'https://example.org/hook', 'description' => 'Test destination'],
+      $client->requests[0]['data']
+    );
+  }
+
+  /**
+   * Test createDestination sends the throttle rate when one is given.
+   */
+  public function testCreateDestinationSendsThrottleRate(): void {
+    $client = $this->createRecordingClient();
+
+    $client->createDestination('src_123', 'https://example.org/hook', 'Test destination', 500);
+
+    $this->assertCount(1, $client->requests);
+    $this->assertSame(500, $client->requests[0]['data']['throttleRate'] ?? NULL);
+  }
+
+  /**
+   * Test the boundary throttle rates Svix accepts are sent unchanged.
+   *
+   * @param int $throttleRate
+   *   A valid throttle rate.
+   *
+   * @dataProvider validThrottleRateProvider
+   */
+  public function testCreateDestinationAcceptsBoundaryThrottleRates(int $throttleRate): void {
+    $client = $this->createRecordingClient();
+
+    $client->createDestination('src_123', 'https://example.org/hook', 'Test destination', $throttleRate);
+
+    $this->assertSame($throttleRate, $client->requests[0]['data']['throttleRate'] ?? NULL);
+  }
+
+  /**
+   * Supplies throttle rates at the edges of the accepted range.
+   *
+   * @return array<string,array{0:int}>
+   *   Cases keyed by description.
+   */
+  public static function validThrottleRateProvider(): array {
+    return [
+      'lowest' => [1],
+      'highest' => [CRM_Svixclient_Client::MAX_THROTTLE_RATE],
+    ];
+  }
+
+  /**
+   * Test an out-of-range throttle rate is rejected without calling Svix.
+   *
+   * @param int $throttleRate
+   *   An invalid throttle rate.
+   *
+   * @dataProvider invalidThrottleRateProvider
+   */
+  public function testCreateDestinationRejectsInvalidThrottleRate(int $throttleRate): void {
+    $client = $this->createRecordingClient();
+
+    try {
+      $client->createDestination('src_123', 'https://example.org/hook', 'Test destination', $throttleRate);
+      $this->fail('Expected an invalid throttle rate to be rejected.');
+    }
+    catch (\CRM_Core_Exception $e) {
+      $this->assertStringContainsString('throttle rate', $e->getMessage());
+    }
+
+    $this->assertSame([], $client->requests, 'No request should reach Svix.');
+  }
+
+  /**
+   * Supplies throttle rates Svix would reject.
+   *
+   * @return array<string,array{0:int}>
+   *   Cases keyed by description.
+   */
+  public static function invalidThrottleRateProvider(): array {
+    return [
+      'zero' => [0],
+      'negative' => [-1],
+      'above maximum' => [CRM_Svixclient_Client::MAX_THROTTLE_RATE + 1],
+    ];
+  }
+
+  /**
+   * Build a client that records requests instead of calling Svix.
+   *
+   * @return \CRM_Svixclient_Client
+   *   The client; its public $requests property lists the calls made.
+   */
+  private function createRecordingClient(): CRM_Svixclient_Client {
+    \Civi::settings()->set('svix_api_key', 'sk_test_key');
+
+    return new class() extends CRM_Svixclient_Client {
+
+      /**
+       * Requests made, in order.
+       *
+       * @var array<int,array{method:string,path:string,data:array|null}>
+       */
+      public array $requests = [];
+
+      /**
+       * {@inheritdoc}
+       */
+      protected function request(string $method, string $path, ?array $data = NULL): array {
+        $this->requests[] = ['method' => $method, 'path' => $path, 'data' => $data];
+
+        return ['id' => 'ep_recorded'];
+      }
+
+    };
+  }
+
 }

@@ -524,6 +524,91 @@ class SvixWebhookMiddlewareTest extends \BaseHeadlessTest {
   }
 
   /**
+   * Test integrations are not throttled unless they ask to be.
+   */
+  public function testRegisterIntegrationDestinationIsUnthrottledByDefault(): void {
+    $this->setSvixSettings([
+      'svix_api_key' => 'sk_test_key',
+      'svix_source_impact_stack' => 'src_is',
+    ]);
+
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->expects($this->once())
+      ->method('createDestination')
+      ->with('src_is', $this->anything(), $this->anything(), $this->isNull())
+      ->willReturn(['id' => 'ep_new']);
+    $client->method('getDestinationSecret')->willReturn('whsec_new');
+    $client->method('listDestinations')->willReturn([]);
+
+    $this->middlewareWithClient($client)->registerIntegrationDestination('Impact Stack');
+  }
+
+  /**
+   * Test a requested throttle rate is passed through to Svix.
+   */
+  public function testRegisterIntegrationDestinationPassesThrottleRate(): void {
+    $this->setSvixSettings([
+      'svix_api_key' => 'sk_test_key',
+      'svix_source_impact_stack' => 'src_is',
+    ]);
+
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->expects($this->once())
+      ->method('createDestination')
+      ->with('src_is', $this->anything(), $this->anything(), $this->identicalTo(500))
+      ->willReturn(['id' => 'ep_new']);
+    $client->method('getDestinationSecret')->willReturn('whsec_new');
+    $client->method('listDestinations')->willReturn([]);
+
+    $this->assertSame(
+      'ep_new',
+      $this->middlewareWithClient($client)->registerIntegrationDestination('Impact Stack', NULL, 500)
+    );
+  }
+
+  /**
+   * Test an invalid throttle rate leaves the live destination alone.
+   */
+  public function testRegisterIntegrationDestinationRejectsInvalidThrottleRate(): void {
+    $this->setSvixSettings([
+      'svix_api_key' => 'sk_test_key',
+      'svix_source_impact_stack' => 'src_is',
+    ]);
+
+    SvixDestination::create(FALSE)
+      ->addValue('source_id', 'src_is')
+      ->addValue('svix_destination_id', 'ep_old')
+      ->addValue('type', 'Impact Stack')
+      ->addValue('signing_secret', 'whsec_old')
+      ->execute();
+
+    $client = new class() extends \CRM_Svixclient_Client {
+
+      /**
+       * {@inheritdoc}
+       */
+      protected function request(string $method, string $path, ?array $data = NULL): array {
+        throw new \LogicException("Svix must not be called: {$method} {$path}");
+      }
+
+    };
+
+    $middleware = $this->middlewareWithClient($client);
+
+    try {
+      $middleware->registerIntegrationDestination('Impact Stack', NULL, 0);
+      $this->fail('Expected an invalid throttle rate to be rejected.');
+    }
+    catch (\CRM_Core_Exception $e) {
+      $this->assertStringContainsString('throttle rate', $e->getMessage());
+    }
+
+    $stored = $middleware->getDestinationForType('Impact Stack');
+    $this->assertNotNull($stored);
+    $this->assertSame('ep_old', $stored['svix_destination_id']);
+  }
+
+  /**
    * Builds a middleware whose Svix client is the given double.
    *
    * @param \CRM_Svixclient_Client $client
