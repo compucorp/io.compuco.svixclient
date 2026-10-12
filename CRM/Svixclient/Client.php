@@ -18,6 +18,13 @@ use Svix\Webhook;
 class CRM_Svixclient_Client {
 
   /**
+   * Highest throttle rate Svix accepts for a destination.
+   *
+   * Svix stores `throttleRate` as an unsigned 16-bit integer.
+   */
+  public const MAX_THROTTLE_RATE = 65535;
+
+  /**
    * Base URL for Svix Ingest API.
    *
    * Protected to allow test classes to override for mock servers.
@@ -92,29 +99,41 @@ class CRM_Svixclient_Client {
    *   The webhook URL to receive events.
    * @param string $description
    *   A description for this destination.
+   * @param int|null $throttleRate
+   *   Optional maximum number of messages per second Svix may deliver
+   *   to this destination.
    *
    * @return array
    *   The created destination data from Svix API.
    *
    * @throws CRM_Core_Exception
-   *   If the API call fails.
+   *   If the throttle rate is out of range or the API call fails.
    */
   public function createDestination(
     string $sourceId,
     string $url,
     string $description,
+    ?int $throttleRate = NULL,
   ): array {
+    self::assertValidThrottleRate($throttleRate);
+
+    $payload = [
+      'url' => $url,
+      'description' => $description,
+    ];
+    if ($throttleRate !== NULL) {
+      $payload['throttleRate'] = $throttleRate;
+    }
+
     try {
       \Civi::log()->info('Creating Svix destination', [
         'source_id' => $sourceId,
         'url' => $url,
         'description' => $description,
+        'throttle_rate' => $throttleRate,
       ]);
 
-      $response = $this->request('POST', "/ingest/api/v1/source/{$sourceId}/endpoint", [
-        'url' => $url,
-        'description' => $description,
-      ]);
+      $response = $this->request('POST', "/ingest/api/v1/source/{$sourceId}/endpoint", $payload);
 
       \Civi::log()->info('Svix destination created', [
         'source_id' => $sourceId,
@@ -131,6 +150,29 @@ class CRM_Svixclient_Client {
         'error' => $e->getMessage(),
       ]);
       throw new CRM_Core_Exception('Failed to create Svix destination: ' . $e->getMessage());
+    }
+  }
+
+  /**
+   * Ensure a throttle rate is one Svix will accept.
+   *
+   * @param int|null $throttleRate
+   *   Messages per second, or NULL for no throttling.
+   *
+   * @throws CRM_Core_Exception
+   *   If the rate is outside 1 to MAX_THROTTLE_RATE.
+   */
+  private static function assertValidThrottleRate(?int $throttleRate): void {
+    if ($throttleRate === NULL) {
+      return;
+    }
+
+    if ($throttleRate < 1 || $throttleRate > self::MAX_THROTTLE_RATE) {
+      throw new CRM_Core_Exception(sprintf(
+        'Svix throttle rate must be between 1 and %d messages per second, %d given.',
+        self::MAX_THROTTLE_RATE,
+        $throttleRate
+      ));
     }
   }
 
@@ -490,7 +532,7 @@ class CRM_Svixclient_Client {
    * @throws CRM_Core_Exception
    *   If the request fails.
    */
-  private function request(string $method, string $path, ?array $data = NULL): array {
+  protected function request(string $method, string $path, ?array $data = NULL): array {
     $ch = curl_init();
     if ($ch === FALSE) {
       throw new CRM_Core_Exception('Failed to initialize cURL session for Svix API request.');

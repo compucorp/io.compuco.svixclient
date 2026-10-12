@@ -499,14 +499,18 @@ class SvixWebhookMiddleware {
    *   The integration name, e.g. 'Impact Stack'.
    * @param int|null $contactId
    *   Optional contact ID of who created this destination.
+   * @param int|null $throttleRate
+   *   Optional maximum messages per second Svix may deliver
+   *   to the new destination.
    *
    * @return string
    *   The Svix destination ID.
    *
    * @throws \CRM_Core_Exception
-   *   If the integration is not supported or destination creation fails.
+   *   If the integration is not supported, the throttle rate is invalid,
+   *   or destination creation fails.
    */
-  public function registerIntegrationDestination(string $type, ?int $contactId = NULL): string {
+  public function registerIntegrationDestination(string $type, ?int $contactId = NULL, ?int $throttleRate = NULL): string {
     $config = SvixIntegrationConfig::fromType($type);
     if ($config === NULL) {
       throw new \CRM_Core_Exception("Unsupported integration type for Svix: {$type}");
@@ -533,7 +537,8 @@ class SvixWebhookMiddleware {
       $webhookUrl,
       $type,
       NULL,
-      $contactId
+      $contactId,
+      $throttleRate
     );
 
     $this->disableExistingDestinations($client, $sourceId, $webhookUrl, $description, NULL, $destinationId);
@@ -692,6 +697,9 @@ class SvixWebhookMiddleware {
    *   tied to a payment processor.
    * @param int|null $contactId
    *   Optional contact ID.
+   * @param int|null $throttleRate
+   *   Optional maximum messages per second for the destination,
+   *   or NULL for no throttling.
    *
    * @return string
    *   The new destination ID.
@@ -706,9 +714,10 @@ class SvixWebhookMiddleware {
     string $type,
     ?int $paymentProcessorId,
     ?int $contactId,
+    ?int $throttleRate = NULL,
   ): string {
     // Create destination via Svix client.
-    $destination = $client->createDestination($sourceId, $webhookUrl, $description);
+    $destination = $client->createDestination($sourceId, $webhookUrl, $description, $throttleRate);
 
     // Set the transformation (filter). Integrations with a dedicated source
     // receive every event from that source, so they have no filter.
@@ -742,6 +751,7 @@ class SvixWebhookMiddleware {
       'type' => $type,
       'svix_destination_id' => $destination['id'],
       'payment_processor_id' => $paymentProcessorId,
+      'throttle_rate' => $throttleRate,
     ]);
 
     return $destination['id'];
