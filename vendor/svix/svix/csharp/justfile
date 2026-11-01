@@ -1,6 +1,0 @@
-_default:
-    just --list --justfile {{ justfile() }}
-
-fmt *args='':
-    csharpier format Svix {{ args }}
-    csharpier format Svix.Tests {{ args }}
