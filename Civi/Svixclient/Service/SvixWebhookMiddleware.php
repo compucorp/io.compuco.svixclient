@@ -769,20 +769,42 @@ class SvixWebhookMiddleware {
         continue;
       }
 
-      // Skip already disabled destinations.
-      if (!empty($dest['disabled'])) {
-        continue;
+      if (empty($dest['disabled'])) {
+        \Civi::log()->info('Disabling existing Svix destination for URL', [
+          'source_id' => $sourceId,
+          'destination_id' => $dest['id'],
+          'url' => $destUrl,
+          'description' => $description,
+        ]);
+
+        $client->disableDestination($sourceId, $dest['id']);
       }
 
-      \Civi::log()->info('Disabling existing Svix destination for URL', [
-        'source_id' => $sourceId,
-        'destination_id' => $dest['id'],
-        'url' => $destUrl,
-        'description' => $description,
-      ]);
-
-      $client->disableDestination($sourceId, $dest['id']);
+      // The replaced destination's local record has to go too, including
+      // ones disabled by an earlier re-registration. Its signing secret would
+      // otherwise stay in getSecretsForProcessorType(), and verify() would
+      // try it on every webhook.
+      $this->deleteLocalDestination($sourceId, (string) $dest['id']);
     }
+  }
+
+  /**
+   * Removes the local record of a Svix destination that has been replaced.
+   *
+   * @param string $sourceId
+   *   The Svix source ID.
+   * @param string $destinationId
+   *   The Svix destination ID.
+   */
+  private function deleteLocalDestination(string $sourceId, string $destinationId): void {
+    if ($destinationId === '') {
+      return;
+    }
+
+    SvixDestination::delete(FALSE)
+      ->addWhere('source_id', '=', $sourceId)
+      ->addWhere('svix_destination_id', '=', $destinationId)
+      ->execute();
   }
 
   /**

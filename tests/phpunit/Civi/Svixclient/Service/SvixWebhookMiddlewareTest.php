@@ -1074,6 +1074,124 @@ class SvixWebhookMiddlewareTest extends \BaseHeadlessTest {
       $description,
       (int) $testProcessor['id']
     );
+
+    // Only the replaced Test record goes; the Live processor's stays.
+    $this->assertSame(['ep_live'], $this->getLocalDestinationIds('src_123'));
+  }
+
+  /**
+   * Test the replaced destination's local record is removed.
+   *
+   * Otherwise its signing secret stays in getSecretsForProcessorType() and
+   * verify() tries it on every webhook, one more each time the processor is
+   * re-registered.
+   */
+  public function testDisableExistingDestinationsDeletesTheReplacedLocalRecord(): void {
+    $webhookUrl = 'https://example.org/civicrm/stripe/webhook';
+    $processorId = $this->createDummyProcessor('Stripe Express');
+
+    SvixDestination::create(FALSE)
+      ->addValue('source_id', 'src_platform')
+      ->addValue('svix_destination_id', 'ep_old')
+      ->addValue('signing_secret', 'whsec_old')
+      ->addValue('type', 'Stripe Connect')
+      ->addValue('payment_processor_id', $processorId)
+      ->execute();
+    SvixDestination::create(FALSE)
+      ->addValue('source_id', 'src_platform')
+      ->addValue('svix_destination_id', 'ep_other_account')
+      ->addValue('signing_secret', 'whsec_other')
+      ->addValue('type', 'Stripe Connect')
+      ->addValue('payment_processor_id', $processorId)
+      ->execute();
+
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->method('listDestinations')->willReturn([
+      [
+        'id' => 'ep_old',
+        'url' => $webhookUrl,
+        'description' => 'CiviCRM Stripe platform - acct_express',
+        'disabled' => FALSE,
+      ],
+      [
+        'id' => 'ep_other_account',
+        'url' => $webhookUrl,
+        'description' => 'CiviCRM Stripe platform - acct_other',
+        'disabled' => FALSE,
+      ],
+    ]);
+    $client->expects($this->once())
+      ->method('disableDestination')
+      ->with('src_platform', 'ep_old');
+
+    $this->invokeDisableExistingDestinations(
+      $client,
+      'src_platform',
+      $webhookUrl,
+      'CiviCRM Stripe platform - acct_express',
+      $processorId
+    );
+
+    $this->assertSame(['ep_other_account'], $this->getLocalDestinationIds('src_platform'));
+  }
+
+  /**
+   * Test a record left over from an earlier re-registration is removed.
+   *
+   * Its destination is already disabled in Svix, so it isn't disabled again,
+   * but its local record still goes.
+   */
+  public function testDisableExistingDestinationsDeletesLeftoverRecordOfDisabledDestination(): void {
+    $webhookUrl = 'https://example.org/civicrm/stripe/webhook';
+    $processorId = $this->createDummyProcessor('Stripe Express');
+
+    SvixDestination::create(FALSE)
+      ->addValue('source_id', 'src_platform')
+      ->addValue('svix_destination_id', 'ep_disabled_earlier')
+      ->addValue('signing_secret', 'whsec_stale')
+      ->addValue('type', 'Stripe Connect')
+      ->addValue('payment_processor_id', $processorId)
+      ->execute();
+
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->method('listDestinations')->willReturn([
+      [
+        'id' => 'ep_disabled_earlier',
+        'url' => $webhookUrl,
+        'description' => 'CiviCRM Stripe platform - acct_express',
+        'disabled' => TRUE,
+      ],
+    ]);
+    $client->expects($this->never())->method('disableDestination');
+
+    $this->invokeDisableExistingDestinations(
+      $client,
+      'src_platform',
+      $webhookUrl,
+      'CiviCRM Stripe platform - acct_express',
+      $processorId
+    );
+
+    $this->assertSame([], $this->getLocalDestinationIds('src_platform'));
+  }
+
+  /**
+   * Gets the Svix destination IDs recorded locally for a source.
+   *
+   * @param string $sourceId
+   *   The Svix source ID.
+   *
+   * @return string[]
+   *   The destination IDs, sorted.
+   */
+  private function getLocalDestinationIds(string $sourceId): array {
+    $ids = SvixDestination::get(FALSE)
+      ->addWhere('source_id', '=', $sourceId)
+      ->execute()
+      ->column('svix_destination_id');
+    sort($ids);
+
+    return $ids;
   }
 
   /**

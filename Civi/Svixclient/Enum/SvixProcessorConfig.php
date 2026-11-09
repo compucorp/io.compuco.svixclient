@@ -161,6 +161,14 @@ enum SvixProcessorConfig: string {
    * in metadata.connected_account_id (set by the Stripe extension, see
    * CRM_Stripe_Helper_Constants::CONNECTED_ACCOUNT_METADATA_KEY).
    *
+   * That covers the events the platform event destination sends:
+   * payment_intent.succeeded / payment_failed / canceled (PaymentIntent),
+   * charge.refunded (Charge) and checkout.session.expired (Checkout
+   * Session). Refund (refund.*, charge.refund.updated), Dispute
+   * (charge.dispute.*) and SetupIntent objects carry none of these fields,
+   * so if those events are ever sent, every destination cancels them: they
+   * are never delivered, and never delivered to the wrong site.
+   *
    * @param string $routingValue
    *   The routing value to match (e.g. 'acct_xxx').
    *
