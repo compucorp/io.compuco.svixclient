@@ -1,0 +1,37 @@
+name: Python Release
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  workflow_run:
+    workflows:
+      - Mega Releaser
+    types:
+      - completed
+
+jobs:
+  build:
+    permissions:
+      id-token: write
+    name: Build distributions
+    runs-on: ubuntu-24.04
+    environment: release
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: '3.14'
+
+      - name: Install deps
+        working-directory: ./python
+        run: uv sync
+
+      - name: Build distributions
+        working-directory: ./python
+        run: uv build
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: python/dist
