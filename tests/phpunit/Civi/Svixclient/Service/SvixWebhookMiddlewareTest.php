@@ -5,6 +5,7 @@ namespace Civi\Svixclient\Service;
 use Civi\Api4\PaymentProcessor;
 use Civi\Api4\SvixDestination;
 use Civi\Svixclient\Enum\SvixIntegrationConfig;
+use Svix\Webhook;
 
 /**
  * Tests for the SvixWebhookMiddleware class.
@@ -609,6 +610,239 @@ class SvixWebhookMiddlewareTest extends \BaseHeadlessTest {
   }
 
   /**
+   * Test a processor type without a platform source cannot register one.
+   */
+  public function testRegisterPlatformDestinationThrowsForProcessorWithoutPlatformSource(): void {
+    $this->expectException(\CRM_Core_Exception::class);
+    $this->expectExceptionMessage('has no Svix platform source');
+
+    $this->middleware->registerPlatformDestination('GoCardless', 1, 'OR000123');
+  }
+
+  /**
+   * Test an empty routing value is rejected before anything is created.
+   */
+  public function testRegisterPlatformDestinationRejectsEmptyRoutingValue(): void {
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->expects($this->never())->method('createDestination');
+
+    $this->expectException(\CRM_Core_Exception::class);
+    $this->expectExceptionMessage('routing value is required');
+
+    $this->middlewareWithClient($client)->registerPlatformDestination('Stripe Connect', 1, '');
+  }
+
+  /**
+   * Test registering fails clearly when the platform source isn't set.
+   */
+  public function testRegisterPlatformDestinationThrowsWhenPlatformSourceNotConfigured(): void {
+    $this->setSvixSettings(['svix_source_stripe_platform' => '']);
+
+    $this->expectException(\CRM_Core_Exception::class);
+    $this->expectExceptionMessage("Set the 'svix_source_stripe_platform' setting");
+
+    $this->middleware->registerPlatformDestination('Stripe Connect', 1, 'acct_123');
+  }
+
+  /**
+   * Test the platform destination uses the platform source and filter.
+   */
+  public function testRegisterPlatformDestinationUsesPlatformSourceAndFilter(): void {
+    $this->setSvixSettings([
+      'svix_api_key' => 'sk_test_key',
+      'svix_source_stripe_connect' => 'src_connect',
+      'svix_source_stripe_platform' => 'src_platform',
+    ]);
+    $processorId = $this->createDummyProcessor('Stripe Express');
+
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->method('listDestinations')->willReturn([]);
+    $client->expects($this->once())
+      ->method('createDestination')
+      ->with('src_platform', $this->stringContains('civicrm/stripe/webhook'), 'CiviCRM Stripe platform - acct_123')
+      ->willReturn(['id' => 'ep_platform']);
+    $client->expects($this->once())
+      ->method('setTransformation')
+      ->with('src_platform', 'ep_platform', $this->logicalAnd(
+        $this->stringContains("webhook.payload.data.object.transfer_data.destination === 'acct_123'"),
+        $this->stringContains("webhook.payload.data.object.metadata.connected_account_id === 'acct_123'")
+      ));
+    $client->method('getDestinationSecret')->willReturn('whsec_platform');
+
+    $destinationId = $this->middlewareWithClient($client)
+      ->registerPlatformDestination('Stripe Connect', $processorId, 'acct_123');
+
+    $this->assertSame('ep_platform', $destinationId);
+    $stored = SvixDestination::get(FALSE)
+      ->addWhere('svix_destination_id', '=', 'ep_platform')
+      ->execute()
+      ->first();
+    $this->assertIsArray($stored);
+    $this->assertSame('src_platform', $stored['source_id']);
+    $this->assertSame('Stripe Connect', $stored['type']);
+    $this->assertSame($processorId, (int) $stored['payment_processor_id']);
+    $this->assertSame('whsec_platform', $stored['signing_secret']);
+  }
+
+  /**
+   * Test re-registering the platform destination leaves the main one alone.
+   */
+  public function testRegisterPlatformDestinationDoesNotDisableMainDestination(): void {
+    $this->setSvixSettings([
+      'svix_api_key' => 'sk_test_key',
+      'svix_source_stripe_platform' => 'src_platform',
+    ]);
+    $processorId = $this->createDummyProcessor('Stripe Express');
+    $url = \CRM_Utils_System::url('civicrm/stripe/webhook', '', TRUE);
+
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->method('listDestinations')->willReturn([
+      [
+        'id' => 'ep_main',
+        'url' => $url,
+        'description' => 'CiviCRM Stripe - acct_123',
+        'disabled' => FALSE,
+      ],
+      [
+        'id' => 'ep_platform_old',
+        'url' => $url,
+        'description' => 'CiviCRM Stripe platform - acct_123',
+        'disabled' => FALSE,
+      ],
+    ]);
+    $client->expects($this->once())
+      ->method('disableDestination')
+      ->with('src_platform', 'ep_platform_old');
+    $client->method('createDestination')->willReturn(['id' => 'ep_platform_new']);
+    $client->method('getDestinationSecret')->willReturn('whsec_platform_new');
+
+    $this->middlewareWithClient($client)->registerPlatformDestination('Stripe Connect', $processorId, 'acct_123');
+  }
+
+  /**
+   * Test a webhook signed by any of the processor's destinations verifies.
+   *
+   * A Stripe Express site has a main and a platform destination, each with
+   * its own secret. Svix signs each delivery with the secret of the
+   * destination that delivered it.
+   */
+  public function testVerifyAcceptsAnyOfTheProcessorsSecrets(): void {
+    $processorId = $this->createDummyProcessor('Express site');
+    $mainSecret = 'whsec_' . base64_encode(random_bytes(24));
+    $platformSecret = 'whsec_' . base64_encode(random_bytes(24));
+    $this->createDestinationRecord($processorId, 'src_connect', 'ep_main', $mainSecret);
+    $this->createDestinationRecord($processorId, 'src_platform', 'ep_platform', $platformSecret);
+
+    $payload = '{"type":"payment_intent.succeeded"}';
+    foreach ([$mainSecret, $platformSecret] as $secret) {
+      $result = $this->middleware->verify($payload, 'Dummy', $this->signedHeaders($payload, $secret));
+      $this->assertTrue($result['valid'], 'Signed with one of the destination secrets');
+      $this->assertNull($result['error']);
+    }
+  }
+
+  /**
+   * Test a webhook signed with an unknown secret is still rejected.
+   */
+  public function testVerifyRejectsSignatureFromUnknownSecret(): void {
+    $processorId = $this->createDummyProcessor('Express site');
+    $this->createDestinationRecord($processorId, 'src_connect', 'ep_main', 'whsec_' . base64_encode(random_bytes(24)));
+    $this->createDestinationRecord($processorId, 'src_platform', 'ep_platform', 'whsec_' . base64_encode(random_bytes(24)));
+
+    $payload = '{"type":"payment_intent.succeeded"}';
+    $otherSecret = 'whsec_' . base64_encode(random_bytes(24));
+    $result = $this->middleware->verify($payload, 'Dummy', $this->signedHeaders($payload, $otherSecret));
+
+    $this->assertFalse($result['valid']);
+    $this->assertNotEmpty($result['error']);
+  }
+
+  /**
+   * Test deleting a processor's destinations removes all of them.
+   */
+  public function testDeleteDestinationRemovesEveryDestinationOfTheProcessor(): void {
+    $processorId = $this->createDummyProcessor('Express site');
+    $otherProcessorId = $this->createDummyProcessor('Other site');
+    $this->createDestinationRecord($processorId, 'src_connect', 'ep_main', 'whsec_main');
+    $this->createDestinationRecord($processorId, 'src_platform', 'ep_platform', 'whsec_platform');
+    $this->createDestinationRecord($otherProcessorId, 'src_connect', 'ep_other', 'whsec_other');
+
+    $this->middleware->deleteDestination($processorId);
+
+    $remaining = SvixDestination::get(FALSE)
+      ->addWhere('payment_processor_id', 'IN', [$processorId, $otherProcessorId])
+      ->execute()
+      ->column('svix_destination_id');
+    $this->assertSame(['ep_other'], $remaining);
+  }
+
+  /**
+   * Creates a Dummy payment processor.
+   *
+   * @param string $name
+   *   The processor name.
+   *
+   * @return int
+   *   The processor ID.
+   */
+  private function createDummyProcessor(string $name): int {
+    $processor = PaymentProcessor::create(FALSE)
+      ->addValue('name', $name)
+      ->addValue('payment_processor_type_id:name', 'Dummy')
+      ->addValue('is_active', TRUE)
+      ->addValue('is_test', FALSE)
+      ->execute()
+      ->first();
+    $this->assertIsArray($processor);
+
+    return (int) $processor['id'];
+  }
+
+  /**
+   * Stores a destination record for a payment processor.
+   *
+   * @param int $processorId
+   *   The payment processor ID.
+   * @param string $sourceId
+   *   The Svix source ID.
+   * @param string $destinationId
+   *   The Svix destination ID.
+   * @param string $secret
+   *   The signing secret.
+   */
+  private function createDestinationRecord(int $processorId, string $sourceId, string $destinationId, string $secret): void {
+    SvixDestination::create(FALSE)
+      ->addValue('source_id', $sourceId)
+      ->addValue('svix_destination_id', $destinationId)
+      ->addValue('signing_secret', $secret)
+      ->addValue('type', 'Dummy')
+      ->addValue('payment_processor_id', $processorId)
+      ->execute();
+  }
+
+  /**
+   * Builds Svix headers for a payload signed with the given secret.
+   *
+   * @param string $payload
+   *   The webhook payload.
+   * @param string $secret
+   *   The signing secret.
+   *
+   * @return array<string,string>
+   *   The svix-id, svix-timestamp and svix-signature headers.
+   */
+  private function signedHeaders(string $payload, string $secret): array {
+    $messageId = 'msg_' . bin2hex(random_bytes(8));
+    $timestamp = time();
+
+    return [
+      'svix-id' => $messageId,
+      'svix-timestamp' => (string) $timestamp,
+      'svix-signature' => (new Webhook($secret))->sign($messageId, $timestamp, $payload),
+    ];
+  }
+
+  /**
    * Builds a middleware whose Svix client is the given double.
    *
    * @param \CRM_Svixclient_Client $client
@@ -840,6 +1074,124 @@ class SvixWebhookMiddlewareTest extends \BaseHeadlessTest {
       $description,
       (int) $testProcessor['id']
     );
+
+    // Only the replaced Test record goes; the Live processor's stays.
+    $this->assertSame(['ep_live'], $this->getLocalDestinationIds('src_123'));
+  }
+
+  /**
+   * Test the replaced destination's local record is removed.
+   *
+   * Otherwise its signing secret stays in getSecretsForProcessorType() and
+   * verify() tries it on every webhook, one more each time the processor is
+   * re-registered.
+   */
+  public function testDisableExistingDestinationsDeletesTheReplacedLocalRecord(): void {
+    $webhookUrl = 'https://example.org/civicrm/stripe/webhook';
+    $processorId = $this->createDummyProcessor('Stripe Express');
+
+    SvixDestination::create(FALSE)
+      ->addValue('source_id', 'src_platform')
+      ->addValue('svix_destination_id', 'ep_old')
+      ->addValue('signing_secret', 'whsec_old')
+      ->addValue('type', 'Stripe Connect')
+      ->addValue('payment_processor_id', $processorId)
+      ->execute();
+    SvixDestination::create(FALSE)
+      ->addValue('source_id', 'src_platform')
+      ->addValue('svix_destination_id', 'ep_other_account')
+      ->addValue('signing_secret', 'whsec_other')
+      ->addValue('type', 'Stripe Connect')
+      ->addValue('payment_processor_id', $processorId)
+      ->execute();
+
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->method('listDestinations')->willReturn([
+      [
+        'id' => 'ep_old',
+        'url' => $webhookUrl,
+        'description' => 'CiviCRM Stripe platform - acct_express',
+        'disabled' => FALSE,
+      ],
+      [
+        'id' => 'ep_other_account',
+        'url' => $webhookUrl,
+        'description' => 'CiviCRM Stripe platform - acct_other',
+        'disabled' => FALSE,
+      ],
+    ]);
+    $client->expects($this->once())
+      ->method('disableDestination')
+      ->with('src_platform', 'ep_old');
+
+    $this->invokeDisableExistingDestinations(
+      $client,
+      'src_platform',
+      $webhookUrl,
+      'CiviCRM Stripe platform - acct_express',
+      $processorId
+    );
+
+    $this->assertSame(['ep_other_account'], $this->getLocalDestinationIds('src_platform'));
+  }
+
+  /**
+   * Test a record left over from an earlier re-registration is removed.
+   *
+   * Its destination is already disabled in Svix, so it isn't disabled again,
+   * but its local record still goes.
+   */
+  public function testDisableExistingDestinationsDeletesLeftoverRecordOfDisabledDestination(): void {
+    $webhookUrl = 'https://example.org/civicrm/stripe/webhook';
+    $processorId = $this->createDummyProcessor('Stripe Express');
+
+    SvixDestination::create(FALSE)
+      ->addValue('source_id', 'src_platform')
+      ->addValue('svix_destination_id', 'ep_disabled_earlier')
+      ->addValue('signing_secret', 'whsec_stale')
+      ->addValue('type', 'Stripe Connect')
+      ->addValue('payment_processor_id', $processorId)
+      ->execute();
+
+    $client = $this->createMock(\CRM_Svixclient_Client::class);
+    $client->method('listDestinations')->willReturn([
+      [
+        'id' => 'ep_disabled_earlier',
+        'url' => $webhookUrl,
+        'description' => 'CiviCRM Stripe platform - acct_express',
+        'disabled' => TRUE,
+      ],
+    ]);
+    $client->expects($this->never())->method('disableDestination');
+
+    $this->invokeDisableExistingDestinations(
+      $client,
+      'src_platform',
+      $webhookUrl,
+      'CiviCRM Stripe platform - acct_express',
+      $processorId
+    );
+
+    $this->assertSame([], $this->getLocalDestinationIds('src_platform'));
+  }
+
+  /**
+   * Gets the Svix destination IDs recorded locally for a source.
+   *
+   * @param string $sourceId
+   *   The Svix source ID.
+   *
+   * @return string[]
+   *   The destination IDs, sorted.
+   */
+  private function getLocalDestinationIds(string $sourceId): array {
+    $ids = SvixDestination::get(FALSE)
+      ->addWhere('source_id', '=', $sourceId)
+      ->execute()
+      ->column('svix_destination_id');
+    sort($ids);
+
+    return $ids;
   }
 
   /**

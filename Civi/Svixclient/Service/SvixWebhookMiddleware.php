@@ -80,10 +80,12 @@ class SvixWebhookMiddleware {
       $headers = $this->getSvixHeaders();
     }
 
-    // Get the signing secret for this processor type.
-    $secret = $this->getSecretForProcessorType($processorTypeName);
+    // A processor can have more than one destination (e.g. a Stripe Express
+    // site also has one on the platform source), each with its own signing
+    // secret, so the webhook is valid if any of them verifies it.
+    $secrets = $this->getSecretsForProcessorType($processorTypeName);
 
-    if ($secret === NULL) {
+    if ($secrets === []) {
       return [
         'valid' => FALSE,
         'message' => 'No Svix signing secret found for processor type',
@@ -91,27 +93,75 @@ class SvixWebhookMiddleware {
       ];
     }
 
-    try {
-      $isValid = \CRM_Svixclient_Client::verifyWebhook($payload, $headers, $secret);
+    $lastError = NULL;
+    foreach ($secrets as $secret) {
+      try {
+        $isValid = \CRM_Svixclient_Client::verifyWebhook($payload, $headers, $secret);
+        if ($isValid) {
+          return [
+            'valid' => TRUE,
+            'message' => 'Webhook signature verified successfully',
+            'error' => NULL,
+          ];
+        }
+      }
+      catch (\Exception $e) {
+        $lastError = $e->getMessage();
+      }
+    }
 
-      return [
-        'valid' => $isValid,
-        'message' => 'Webhook signature verified successfully',
-        'error' => NULL,
-      ];
+    \Civi::log()->warning('Svix webhook verification failed', [
+      'processor_type' => $processorTypeName,
+      'secrets_tried' => count($secrets),
+      'error' => $lastError,
+    ]);
+
+    return [
+      'valid' => FALSE,
+      'message' => 'Webhook signature verification failed',
+      'error' => $lastError,
+    ];
+  }
+
+  /**
+   * Get every Svix signing secret for a payment processor type.
+   *
+   * Covers all destinations of the type's active processors (test and live,
+   * and a processor's platform destination), newest first.
+   *
+   * @param string $processorTypeName
+   *   The payment processor type name (e.g., 'Stripe Connect').
+   *
+   * @return string[]
+   *   The signing secrets; empty if none are configured.
+   */
+  public function getSecretsForProcessorType(string $processorTypeName): array {
+    try {
+      $secrets = SvixDestination::get(FALSE)
+        ->addSelect('signing_secret')
+        ->addJoin('PaymentProcessor AS pp', 'INNER', ['payment_processor_id', '=', 'pp.id'])
+        ->addWhere('pp.payment_processor_type_id:name', '=', $processorTypeName)
+        ->addWhere('pp.is_active', '=', TRUE)
+        ->addOrderBy('id', 'DESC')
+        ->execute()
+        ->column('signing_secret');
     }
     catch (\Exception $e) {
-      \Civi::log()->warning('Svix webhook verification failed', [
+      \Civi::log()->error('Failed to get Svix signing secrets', [
         'processor_type' => $processorTypeName,
         'error' => $e->getMessage(),
       ]);
-
-      return [
-        'valid' => FALSE,
-        'message' => 'Webhook signature verification failed',
-        'error' => $e->getMessage(),
-      ];
+      return [];
     }
+
+    $secrets = array_filter($secrets, fn ($secret): bool => is_string($secret) && $secret !== '');
+    if ($secrets === []) {
+      \Civi::log()->info('No Svix signing secret found', [
+        'processor_type' => $processorTypeName,
+      ]);
+    }
+
+    return array_values(array_unique($secrets));
   }
 
   /**
@@ -493,6 +543,84 @@ class SvixWebhookMiddleware {
   }
 
   /**
+   * Register a Svix destination on the processor's platform source.
+   *
+   * For processors whose payments can also produce events on the platform
+   * account. Stripe Express payments are destination charges on the
+   * platform, so their events have no `account` field and come through the
+   * platform source; this destination routes them to the site by the
+   * connected account ID found in the event object. Call it in addition to
+   * registerDestination().
+   *
+   * @param string $processorType
+   *   The payment processor type (e.g., 'Stripe Connect').
+   * @param int $paymentProcessorId
+   *   The CiviCRM payment processor ID.
+   * @param string $routingValue
+   *   The value to match for routing (e.g., Stripe account ID 'acct_xxx').
+   * @param int|null $contactId
+   *   Optional contact ID of who created this destination.
+   *
+   * @return string
+   *   The Svix destination ID.
+   *
+   * @throws \CRM_Core_Exception
+   *   If the processor type has no platform source, the platform source ID
+   *   is not configured, the routing value is empty, or destination creation
+   *   fails.
+   */
+  public function registerPlatformDestination(
+    string $processorType,
+    int $paymentProcessorId,
+    string $routingValue,
+    ?int $contactId = NULL,
+  ): string {
+    $config = SvixProcessorConfig::fromProcessorType($processorType);
+    if ($config === NULL) {
+      throw new \CRM_Core_Exception("Unsupported processor type for Svix: {$processorType}");
+    }
+
+    // An empty value would route every platform event without the fields to
+    // this site.
+    if ($routingValue === '') {
+      throw new \CRM_Core_Exception("A routing value is required to register a Svix platform destination for {$processorType}.");
+    }
+
+    $filterStrategy = $config->getPlatformFilterStrategy($routingValue);
+    $descriptionTemplate = $config->getPlatformDescriptionTemplate();
+    if ($filterStrategy === NULL || $descriptionTemplate === NULL) {
+      throw new \CRM_Core_Exception("{$processorType} has no Svix platform source.");
+    }
+
+    $sourceId = $config->getPlatformSourceId();
+    if ($sourceId === NULL) {
+      throw new \CRM_Core_Exception("Svix platform source ID not configured for {$processorType}. Set the '{$config->getPlatformSourceIdSetting()}' setting.");
+    }
+
+    $webhookUrl = $this->getWebhookUrlForProcessor($processorType);
+    $filter = \CRM_Svixclient_Client::buildFilter($filterStrategy);
+    $description = str_replace('{value}', $routingValue, $descriptionTemplate);
+
+    // Disable any existing platform destinations for this URL and routing
+    // value. The description differs from the main destination's, so the
+    // main destination is never touched.
+    $client = $this->createClient();
+    $this->disableExistingDestinations($client, $sourceId, $webhookUrl, $description, $paymentProcessorId);
+
+    return $this->createNewDestination(
+      $client,
+      $sourceId,
+      $webhookUrl,
+      $filter,
+      $description,
+      $routingValue,
+      $processorType,
+      $paymentProcessorId,
+      $contactId
+    );
+  }
+
+  /**
    * Register a Svix destination for a non-payment-processor integration.
    *
    * @param string $type
@@ -641,20 +769,42 @@ class SvixWebhookMiddleware {
         continue;
       }
 
-      // Skip already disabled destinations.
-      if (!empty($dest['disabled'])) {
-        continue;
+      if (empty($dest['disabled'])) {
+        \Civi::log()->info('Disabling existing Svix destination for URL', [
+          'source_id' => $sourceId,
+          'destination_id' => $dest['id'],
+          'url' => $destUrl,
+          'description' => $description,
+        ]);
+
+        $client->disableDestination($sourceId, $dest['id']);
       }
 
-      \Civi::log()->info('Disabling existing Svix destination for URL', [
-        'source_id' => $sourceId,
-        'destination_id' => $dest['id'],
-        'url' => $destUrl,
-        'description' => $description,
-      ]);
-
-      $client->disableDestination($sourceId, $dest['id']);
+      // The replaced destination's local record has to go too, including
+      // ones disabled by an earlier re-registration. Its signing secret would
+      // otherwise stay in getSecretsForProcessorType(), and verify() would
+      // try it on every webhook.
+      $this->deleteLocalDestination($sourceId, (string) $dest['id']);
     }
+  }
+
+  /**
+   * Removes the local record of a Svix destination that has been replaced.
+   *
+   * @param string $sourceId
+   *   The Svix source ID.
+   * @param string $destinationId
+   *   The Svix destination ID.
+   */
+  private function deleteLocalDestination(string $sourceId, string $destinationId): void {
+    if ($destinationId === '') {
+      return;
+    }
+
+    SvixDestination::delete(FALSE)
+      ->addWhere('source_id', '=', $sourceId)
+      ->addWhere('svix_destination_id', '=', $destinationId)
+      ->execute();
   }
 
   /**
@@ -758,33 +908,36 @@ class SvixWebhookMiddleware {
   }
 
   /**
-   * Delete Svix destination for a payment processor.
+   * Delete the Svix destinations for a payment processor.
    *
-   * Removes the Svix destination from both Svix and the local database.
+   * Removes every destination recorded for the processor (e.g. the main one
+   * and a Stripe Express platform one) from both Svix and the local
+   * database.
    *
    * @param int $paymentProcessorId
    *   The CiviCRM payment processor ID.
    */
   public function deleteDestination(int $paymentProcessorId): void {
-    // Find destination record.
-    $destination = SvixDestination::get(FALSE)
+    $destinations = SvixDestination::get(FALSE)
       ->addWhere('payment_processor_id', '=', $paymentProcessorId)
-      ->execute()
-      ->first();
+      ->execute();
 
-    if ($destination === NULL) {
+    if ($destinations->count() === 0) {
       \Civi::log()->debug('No Svix destination found for payment processor', [
         'payment_processor_id' => $paymentProcessorId,
       ]);
       return;
     }
 
-    $this->removeDestination($destination);
+    foreach ($destinations as $destination) {
+      $this->removeDestination($destination);
 
-    \Civi::log()->info('Svix destination deleted', [
-      'svix_destination_id' => $destination['svix_destination_id'],
-      'payment_processor_id' => $paymentProcessorId,
-    ]);
+      \Civi::log()->info('Svix destination deleted', [
+        'svix_destination_id' => $destination['svix_destination_id'],
+        'source_id' => $destination['source_id'],
+        'payment_processor_id' => $paymentProcessorId,
+      ]);
+    }
   }
 
   /**
